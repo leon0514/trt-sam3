@@ -12,6 +12,7 @@ Sam3Infer::Sam3Infer(
     int gpu_id,
     float confidence_threshold) : InferBase()
 {
+    AutoDevice device_guard(gpu_id);
     // 初始化分配内存/显存
 
     affine_matrix_tensor_.cpu(2 * 3);
@@ -81,6 +82,7 @@ Sam3Infer::Sam3Infer(
 
 bool Sam3Infer::load_engines()
 {
+    AutoDevice device_guard(gpu_id_);
     // Load TensorRT engines for vision encoder, text encoder, and decoder
     // Implementation details would go here
     vision_encoder_trt_ = TensorRT::load(vision_encoder_path_);
@@ -132,8 +134,21 @@ void Sam3Infer::preprocess(const cv::Mat &input_image, void *stream)
     float *affine_matrix_device = affine_matrix_tensor_.gpu();
 
     cudaStream_t stream_ = (cudaStream_t)stream;
-    // memory copy
-    memcpy(original_image_host, img_tensor.bgrptr, size_image);
+    if (input_image.isContinuous())
+    {
+        memcpy(original_image_host, input_image.data, size_image);
+    }
+    else
+    {
+        // 如果有 padding，必须逐行拷贝
+        int width_bytes = original_image_width_ * 3;
+        for (int h = 0; h < original_image_height_; ++h)
+        {
+            const uint8_t *src_ptr = input_image.ptr<uint8_t>(h);
+            uint8_t *dst_ptr = original_image_host + h * width_bytes;
+            memcpy(dst_ptr, src_ptr, width_bytes);
+        }
+    }
     memcpy(affine_matrix_host, matrix.d2i, sizeof(matrix.d2i));
 
     // cuda memcpy to device
@@ -469,6 +484,7 @@ void Sam3Infer::postprocess(InferResult &result, const std::string &label, void 
 
 InferResult Sam3Infer::forward(const cv::Mat &input_image, const std::string &input_text, void *stream)
 {
+    AutoDevice device_guard(gpu_id_);
     // Preprocess the input image
     preprocess(input_image);
 

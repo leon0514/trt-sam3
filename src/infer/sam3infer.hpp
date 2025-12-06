@@ -5,6 +5,7 @@
 #include "common/memory.hpp"
 #include "common/norm.hpp"
 #include "common/tensorrt.hpp"
+#include "common/device.hpp"
 #include <opencv2/opencv.hpp>
 #include <memory>
 #include <string>

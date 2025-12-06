@@ -1,5 +1,5 @@
 cc        := g++
-name      := trtsahi.so
+name      := trtsam3.so
 workdir   := workspace
 srcdir    := src
 objdir    := objs
@@ -15,7 +15,7 @@ trt_include_path       := /opt/nvidia/TensorRT-10.9.0.34/include
 cuda_include_path      := $(cuda_home)/include
 freetype_include_path  := /usr/include/freetype2
 
-python_include_path  := /usr/include/python3.10
+python_include_path  := /usr/include/python3.12
 
 
 include_paths        := $(project_include_path) \

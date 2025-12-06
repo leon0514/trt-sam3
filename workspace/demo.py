@@ -4,7 +4,7 @@ import time
 from tokenizers import Tokenizer
 import trtsam3  # 导入我们编译好的模块
 
-def osd(image, result):
+def osd(image, results):
     for idx, obj in enumerate(results):
         mask = obj.segmentation.mask
 
@@ -21,15 +21,14 @@ def osd(image, result):
         cv2.rectangle(image, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
     return image
 
-def run():
-    # 1. 初始化模型
+def speed_test():
     print("Initializing engine...")
     engine = trtsam3.Sam3Infer(
         vision_encoder_path="model/vision-encoder.engine",
         text_encoder_path="model/text-encoder.engine",
         decoder_path="model/decoder.engine",
         gpu_id=1,
-        confidence_threshold=0.5
+        confidence_threshold=0.9
     )
 
     if not engine.load_engines():
@@ -54,6 +53,7 @@ def run():
     if image is None:
         print("Image not found")
         return
+    print("Warm up ...")
     for i in range(10):
         engine.forward(image, prompt_text)
     
@@ -63,5 +63,44 @@ def run():
     end = time.time()
     print(f"100 inference times : {(end - start) * 1000} ms")
 
+def run():
+    # 1. 初始化模型
+    print("Initializing engine...")
+    engine = trtsam3.Sam3Infer(
+        vision_encoder_path="model/vision-encoder.engine",
+        text_encoder_path="model/text-encoder.engine",
+        decoder_path="model/decoder.engine",
+        gpu_id=1,
+        confidence_threshold=0.5
+    )
+
+    if not engine.load_engines():
+        print("Failed to load engines")
+        return
+    
+    tokenizer_path = "tokenizer.json"
+    tokenizer = Tokenizer.from_file(tokenizer_path)
+    tokenizer.enable_padding(length=32, pad_id=49407)
+    tokenizer.enable_truncation(max_length=32)
+
+    prompt_text = "coal"
+    encoded = tokenizer.encode(prompt_text)
+    input_ids = list(encoded.ids)
+    attention_mask = list(encoded.attention_mask)
+    
+    # 设置 prompt
+    engine.setup_text_inputs(prompt_text, input_ids, attention_mask)
+
+    # 3. 读取图像
+    image = cv2.imread("images/coal.jpg")
+    if image is None:
+        print("Image not found")
+        return
+    results = engine.forward(image, prompt_text)
+    osd_image = osd(image, results)
+    cv2.imwrite("output/result.jpg", osd_image)
+    
+
 if __name__ == "__main__":
-    run()
+    # run()
+    speed_test()

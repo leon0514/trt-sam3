@@ -58,9 +58,8 @@ Detected 66 objects.
 ```
 
 ## TODO
-1. 多batch支持
-2. 画框识别
-3. 文本自动tokenizer
+1. 画框识别
+2. 文本自动tokenizer
 
 ## 引用
 - 参考实现： `https://github.com/jamjamjon/usls.git`

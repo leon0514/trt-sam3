@@ -56,10 +56,10 @@ Iteration 5: Detected 66 objects.
 [⏰ 10 inferences] : 1227.49890 ms
 Detected 66 objects.
 ```
-
-## TODO
-1. 画框识别
-2. 文本自动tokenizer
+## 识别效果
+<div align="center">
+   <img src="https://raw.githubusercontent.com/leon0514/trt-sam3/refs/heads/main/workspace/assert/result.jpg" width="80%"/>
+</div>
 
 ## 引用
 - 参考实现： `https://github.com/jamjamjon/usls.git`

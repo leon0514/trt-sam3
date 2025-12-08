@@ -36,21 +36,23 @@ public:
     bool load_engines();
     void setup_text_inputs(const std::string &input_text, const std::array<int64_t, 32> &input_ids, const std::array<int64_t, 32> &attention_mask) override;
     virtual InferResult forward(const cv::Mat &input_image, const std::string &input_text, void *stream = nullptr) override;
+    virtual InferResultArray forwards(const std::vector<cv::Mat> &input_images, const std::string &input_text, void *stream = nullptr) override;
     virtual ~Sam3Infer() = default;
 
 private:
-    void preprocess(const cv::Mat &input_image, void *stream = nullptr);
+    void preprocess(const cv::Mat &input_image, int ibatch, void *stream = nullptr);
     bool encode_image(void *stream = nullptr);
     bool encode_text(const std::string &input_text, void *stream = nullptr);
     bool decode(void *stream = nullptr);
-    void postprocess(InferResult &result, const std::string &label, void *stream = nullptr);
+    void postprocess(InferResult &result, int ibatch, const std::string &label, void *stream = nullptr);
+    void adjust_memory(int batch_size);
 
 private:
+    bool isdynamic_model_ = true;
     int input_image_width_ = 1008;
     int input_image_height_ = 1008;
 
-    int original_image_width_ = 0;
-    int original_image_height_ = 0;
+    std::vector<std::pair<int, int>> original_image_sizes_;
 
     int num_queries_ = 200;
     int mask_height_ = 288;
@@ -62,14 +64,37 @@ private:
         -1.0f,
         norm_image::ChannelType::SwapRB);
 
-    tensor::Memory<uint8_t> original_image_tensor_;
-    tensor::Memory<float> preprocess_image_tensor_; // [1, 3, 1008, 1008] UINT8
+    std::vector<int> vision_encoder_input_images_shape_;
+    std::vector<int> text_encoder_input_input_ids_shape_;
+    std::vector<int> text_encoder_input_attention_mask_shape_;
+    std::vector<int> decoder_input_fpn_feat_0_shape_;
+    std::vector<int> decoder_input_fpn_feat_1_shape_;
+    std::vector<int> decoder_input_fpn_feat_2_shape_;
+    std::vector<int> decoder_input_fpn_pos_2_shape_;
+    std::vector<int> decoder_input_prompt_features_shape_;
+    std::vector<int> decoder_input_prompt_mask_shape_;
+
+    std::vector<int> vision_encoder_output_fpn_feat_0_shape_;
+    std::vector<int> vision_encoder_output_fpn_feat_1_shape_;
+    std::vector<int> vision_encoder_output_fpn_feat_2_shape_;
+    std::vector<int> vision_encoder_output_fpn_pos_2_shape_;
+
+    std::vector<int> text_encoder_output_text_features_shape_;
+    std::vector<int> text_encoder_output_text_mask_shape_;
+
+    std::vector<int> decoder_output_pred_masks_shape_;
+    std::vector<int> decoder_output_pred_boxes_shape_;
+    std::vector<int> decoder_output_pred_logits_shape_;
+    std::vector<int> decoder_output_presence_logits_shape_;
+
+    tensor::Memory<float> preprocessed_images_tensor_;
+    std::vector<std::shared_ptr<tensor::Memory<uint8_t>>> original_images_tensor_;
 
     // Image Encoder input tensors
     /**
      *  image                  [batch, 3, 1008, 1008]    FLOAT
      */
-    tensor::Memory<float> encode_image_input_tensor_;
+    tensor::Memory<float> vision_encoder_input_images_tensor_;
     // Image Encoder output tensors
     /**
      * Outputs:
@@ -78,23 +103,23 @@ private:
         fpn_feat_2            [batch, 256, 72, 72]      FLOAT
         fpn_pos_2             [batch, 256, 72, 72]      FLOAT
      */
-    tensor::Memory<float> encode_image_output_fpn_feat_0_tensor_;
-    tensor::Memory<float> encode_image_output_fpn_feat_1_tensor_;
-    tensor::Memory<float> encode_image_output_fpn_feat_2_tensor_;
-    tensor::Memory<float> encode_image_output_fpn_pos_2_tensor_;
+    tensor::Memory<float> vision_encoder_output_fpn_feat_0_tensor_;
+    tensor::Memory<float> vision_encoder_output_fpn_feat_1_tensor_;
+    tensor::Memory<float> vision_encoder_output_fpn_feat_2_tensor_;
+    tensor::Memory<float> vision_encoder_output_fpn_pos_2_tensor_;
 
     /** Text Encoder input tensors
      *  input_ids             [batch, 32]               INT64
         attention_mask        [batch, 32]               INT64
      */
-    tensor::Memory<int64_t> encode_text_input_ids_tensor_;
-    tensor::Memory<int64_t> encode_text_input_attention_mask_tensor_;
+    tensor::Memory<int64_t> text_encoder_input_input_ids_tensor_;
+    tensor::Memory<int64_t> text_encoder_input_attention_mask_tensor_;
     /** Text Encoder output tensors:
         text_features         [batch, 32, 256]          FLOAT
         text_mask             [batch, 32]               BOOL
      */
-    tensor::Memory<float> encode_text_output_text_features_tensor_;
-    tensor::Memory<bool> encode_text_output_text_mask_tensor_;
+    tensor::Memory<float> text_encoder_output_text_features_tensor_;
+    tensor::Memory<bool> text_encoder_output_text_mask_tensor_;
 
     // decode input tensors
     /**
@@ -112,6 +137,14 @@ private:
     // encode_text_output_text_features_tensor_
     // encode_text_output_text_mask_tensor_
 
+    tensor::Memory<float> decoder_input_fpn_feat_0_tensor_;
+    tensor::Memory<float> decoder_input_fpn_feat_1_tensor_;
+    tensor::Memory<float> decoder_input_fpn_feat_2_tensor_;
+    tensor::Memory<float> decoder_input_fpn_pos_2_tensor_;
+    // 只有text encoder的时, decoder_input_prompt_features_tensor_ 和 decoder_input_prompt_mask_tensor_等于encode_text输出
+    tensor::Memory<float> decoder_input_prompt_features_tensor_;
+    tensor::Memory<bool> decoder_input_prompt_mask_tensor_;
+
     // decode output tensors
     /**
      *  pred_masks : {-1 x 200 x 288 x 288} [float32]
@@ -119,11 +152,12 @@ private:
         pred_logits : {-1 x 200} [float32]
         presence_logits : {-1 x 1} [float32]
      */
-    tensor::Memory<float> decode_output_pred_masks_tensor_;
-    tensor::Memory<float> decode_output_pred_boxes_tensor_;
-    tensor::Memory<float> decode_output_pred_logits_tensor_;
-    tensor::Memory<float> decode_output_presence_logits_tensor_;
+    tensor::Memory<float> decoder_output_pred_masks_tensor_;
+    tensor::Memory<float> decoder_output_pred_boxes_tensor_;
+    tensor::Memory<float> decoder_output_pred_logits_tensor_;
+    tensor::Memory<float> decoder_output_presence_logits_tensor_;
 
+    // postprocess intermediate tensors
     tensor::Memory<float> filter_boxes_tensor_;
     tensor::Memory<float> filter_scores_tensor_;
     tensor::Memory<int> filter_indices_tensor_;

@@ -6,10 +6,12 @@
 #include <variant>
 
 using InferResult = object::DetectionBoxArray;
+using InferResultArray = std::vector<object::DetectionBoxArray>;
 class InferBase
 {
 public:
     virtual InferResult forward(const cv::Mat &input_image, const std::string &input_text, void *stream = nullptr) = 0;
+    virtual InferResultArray forwards(const std::vector<cv::Mat> &input_images, const std::string &input_text, void *stream = nullptr) = 0;
     virtual void setup_text_inputs(const std::string &input_text, const std::array<int64_t, 32> &input_ids, const std::array<int64_t, 32> &attention_mask) {}
     virtual ~InferBase() = default;
 };

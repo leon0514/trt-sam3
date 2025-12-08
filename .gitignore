@@ -42,5 +42,4 @@ workspace/*
 !workspace/*.pyi
 !workspace/assert/
 !workspace/font/
-!workspace/images/
 !workspace/script/

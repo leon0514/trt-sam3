@@ -143,11 +143,10 @@ namespace TensorRT
                 return false;
             }
 
-            if (!initLibNvInferPlugins(&gLogger_, "")) {
+            if (!initLibNvInferPlugins(&gLogger_, ""))
+            {
                 printf("Failed to initialize TensorRT's plugin library.\n");
-                return false; 
-            } else {
-                printf("Successfully initialized TensorRT plugin library.\n");
+                return false;
             }
 
             runtime_ = std::shared_ptr<nvinfer1::IRuntime>(nvinfer1::createInferRuntime(gLogger_), destroy_pointer<nvinfer1::IRuntime>);

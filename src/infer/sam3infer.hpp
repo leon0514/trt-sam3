@@ -24,6 +24,7 @@
  * 4. decode : decoder
  * 5. postprocess
  */
+
 class Sam3Infer : public InferBase
 {
 public:
@@ -33,16 +34,35 @@ public:
         const std::string &decoder_path,
         int gpu_id = 0,
         float confidence_threshold = 0.5f);
+
+    Sam3Infer(
+        const std::string &vision_encoder_path,
+        const std::string &text_encoder_path,
+        const std::string &geometry_encoder_path,
+        const std::string &decoder_path,
+        int gpu_id = 0,
+        float confidence_threshold = 0.5f);
+
     bool load_engines();
     void setup_text_inputs(const std::string &input_text, const std::array<int64_t, 32> &input_ids, const std::array<int64_t, 32> &attention_mask) override;
     virtual InferResult forward(const cv::Mat &input_image, const std::string &input_text, void *stream = nullptr) override;
     virtual InferResultArray forwards(const std::vector<cv::Mat> &input_images, const std::string &input_text, void *stream = nullptr) override;
+    InferResult forward(const cv::Mat &input_image, 
+                    const std::string &input_text, 
+                    const std::vector<BoxPrompt> &boxes,
+                    void *stream = nullptr) override;
+
+    virtual InferResultArray forwards(const std::vector<cv::Mat> &input_images, 
+                          const std::string &input_text, 
+                          const std::vector<BoxPrompt> &boxes,
+                          void *stream = nullptr) override;
     virtual ~Sam3Infer() = default;
 
 private:
     void preprocess(const cv::Mat &input_image, int ibatch, void *stream = nullptr);
     bool encode_image(void *stream = nullptr);
     bool encode_text(const std::string &input_text, void *stream = nullptr);
+    bool encode_boxes(const std::vector<BoxPrompt> &boxes, void *stream = nullptr);
     bool decode(void *stream = nullptr);
     void postprocess(InferResult &result, int ibatch, const std::string &label, void *stream = nullptr);
     void adjust_memory(int batch_size);
@@ -67,6 +87,10 @@ private:
     std::vector<int> vision_encoder_input_images_shape_;
     std::vector<int> text_encoder_input_input_ids_shape_;
     std::vector<int> text_encoder_input_attention_mask_shape_;
+    std::vector<int> geometry_encoder_input_input_boxes_shape_;
+    std::vector<int> geometry_encoder_input_input_boxes_labels_shape_;
+    std::vector<int> geometry_encoder_input_fpn_feat_2_shape_;
+    std::vector<int> geometry_encoder_input_fpn_pos_2_shape_;
     std::vector<int> decoder_input_fpn_feat_0_shape_;
     std::vector<int> decoder_input_fpn_feat_1_shape_;
     std::vector<int> decoder_input_fpn_feat_2_shape_;
@@ -81,6 +105,9 @@ private:
 
     std::vector<int> text_encoder_output_text_features_shape_;
     std::vector<int> text_encoder_output_text_mask_shape_;
+
+    std::vector<int> geometry_encoder_output_geometry_features_shape_;
+    std::vector<int> geometry_encoder_output_geometry_mask_shape_;
 
     std::vector<int> decoder_output_pred_masks_shape_;
     std::vector<int> decoder_output_pred_boxes_shape_;
@@ -145,6 +172,13 @@ private:
     tensor::Memory<float> decoder_input_prompt_features_tensor_;
     tensor::Memory<bool> decoder_input_prompt_mask_tensor_;
 
+    tensor::Memory<float> geometry_encoder_input_input_boxes_tensor_;
+    tensor::Memory<int64_t> geometry_encoder_input_input_boxes_labels_tensor_;
+    tensor::Memory<float> geometry_encoder_input_fpn_feat_2_tensor_; // = vision_encoder_output_fpn_feat_2_tensor_
+    tensor::Memory<float> geometry_encoder_input_fpn_pos_2_tensor_;  // = vision_encoder_output_fpn_pos_2_tensor_
+    tensor::Memory<float> geometry_encoder_output_geometry_features_tensor_;
+    tensor::Memory<bool> geometry_encoder_output_geometry_mask_tensor_;
+
     // decode output tensors
     /**
      *  pred_masks : {-1 x 200 x 288 x 288} [float32]
@@ -172,6 +206,7 @@ private:
     float confidence_threshold_;
     std::string vision_encoder_path_;
     std::string text_encoder_path_;
+    std::string geometry_encoder_path_;
     std::string decoder_path_;
     int gpu_id_;
 
@@ -190,6 +225,7 @@ private:
     std::shared_ptr<TensorRT::Engine> vision_encoder_trt_;
     std::shared_ptr<TensorRT::Engine> text_encoder_trt_;
     std::shared_ptr<TensorRT::Engine> decoder_trt_;
+    std::shared_ptr<TensorRT::Engine> geometry_encoder_trt_;
 };
 
 #endif // SAM3INFER_HPP__

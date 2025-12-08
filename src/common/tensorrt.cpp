@@ -35,6 +35,7 @@
 
 #include "NvInfer.h"
 #include "NvInferRuntime.h"
+#include "NvInferPlugin.h"
 #include "common/check.hpp"
 
 namespace TensorRT
@@ -140,6 +141,13 @@ namespace TensorRT
             {
                 printf("Construct for empty data found.\n");
                 return false;
+            }
+
+            if (!initLibNvInferPlugins(&gLogger_, "")) {
+                printf("Failed to initialize TensorRT's plugin library.\n");
+                return false; 
+            } else {
+                printf("Successfully initialized TensorRT plugin library.\n");
             }
 
             runtime_ = std::shared_ptr<nvinfer1::IRuntime>(nvinfer1::createInferRuntime(gLogger_), destroy_pointer<nvinfer1::IRuntime>);

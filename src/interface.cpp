@@ -8,15 +8,11 @@
 #include "common/object.hpp"
 
 namespace py = pybind11;
-
-// --- 辅助函数：cv::Mat -> Numpy ---
 py::array_t<uint8_t> mat_to_numpy(const cv::Mat &mat)
 {
-    // 确保数据是连续的
     if (mat.empty())
         return py::array_t<uint8_t>();
 
-    // 获取 buffer 信息
     std::vector<ssize_t> shape;
     std::vector<ssize_t> strides;
 
@@ -30,8 +26,6 @@ py::array_t<uint8_t> mat_to_numpy(const cv::Mat &mat)
         shape = {mat.rows, mat.cols, mat.channels()};
         strides = {mat.step[0], mat.step[1], mat.elemSize1()};
     }
-
-    // 创建 numpy array，并拷贝数据 (为了安全，防止 C++ 释放后 Python 崩溃)
     return py::array_t<uint8_t>(shape, strides, mat.data);
 }
 
@@ -58,8 +52,6 @@ cv::Mat numpy_to_mat(py::array_t<uint8_t> &input)
     }
 
     int type = (channels == 1) ? CV_8UC1 : CV_8UC3;
-    // 这里使用构造函数直接引用 numpy 的内存，不拷贝。
-    // 注意：在 forward 函数中如果要修改图像，需要 clone
     cv::Mat mat(rows, cols, type, buf.ptr);
     return mat;
 }
@@ -109,21 +101,13 @@ PYBIND11_MODULE(trtsam3, m)
     py::class_<object::Segmentation>(m, "Segmentation")
         .def(py::init<>())
         .def_property("mask",
-                      // Getter: C++ -> Python (cv::Mat -> numpy)
-                      [](object::Segmentation &self)
-                      { return mat_to_numpy(self.mask); },
-                      // Setter: Python -> C++ (numpy -> cv::Mat)
-                      [](object::Segmentation &self, py::array_t<uint8_t> array)
-                      {
-                // 注意：为了安全，建议 clone 一份数据，
-                // 因为 numpy_to_mat 只是引用了 numpy 的内存
-                self.mask = numpy_to_mat(array).clone(); })
-        // 绑定其他成员函数 (如果有的话)
+                      [](object::Segmentation &self) { return mat_to_numpy(self.mask); },
+                      [](object::Segmentation &self, py::array_t<uint8_t> array){
+                            self.mask = numpy_to_mat(array).clone(); 
+                        })
         .def("keep_largest_part", &object::Segmentation::keep_largest_part)
-        // .def("align_to_left_top", &object::Segmentation::align_to_left_top)
         ;
 
-    // 绑定核心的 DetectionBox 结构
     py::class_<object::DetectionBox>(m, "DetectionBox")
         .def(py::init<>())
         .def_readwrite("type", &object::DetectionBox::type)
@@ -146,7 +130,13 @@ PYBIND11_MODULE(trtsam3, m)
              py::arg("decoder_path"),
              py::arg("gpu_id") = 0,
              py::arg("confidence_threshold") = 0.5f)
-
+        .def(py::init<const std::string &, const std::string &, const std::string &, const std::string &, int, float>(),
+             py::arg("vision_encoder_path"),
+             py::arg("text_encoder_path"),
+             py::arg("geometry_encoder_path"),
+             py::arg("decoder_path"),
+             py::arg("gpu_id") = 0,
+             py::arg("confidence_threshold") = 0.5f)
         .def("load_engines", &Sam3Infer::load_engines)
 
         .def("setup_text_inputs", [](Sam3Infer &self, const std::string &text, const std::vector<int64_t> &input_ids, const std::vector<int64_t> &attention_mask)
@@ -165,5 +155,25 @@ PYBIND11_MODULE(trtsam3, m)
         .def("forward", [](Sam3Infer &self, py::array_t<uint8_t> input_image, const std::string &input_text)
              {
             cv::Mat img = numpy_to_mat(input_image);
-            return self.forward(img, input_text, nullptr); }, py::arg("input_image"), py::arg("input_text"));
+            return self.forward(img, input_text, nullptr); }, py::arg("input_image"), py::arg("input_text"))
+        .def("forwards", [](Sam3Infer &self, std::vector<py::array_t<uint8_t>> input_images, const std::string &input_text)
+             {
+            std::vector<cv::Mat> imgs;
+            for (auto &array : input_images)
+            {
+                imgs.push_back(numpy_to_mat(array));
+            }
+            return self.forwards(imgs, input_text, nullptr); }, py::arg("input_images"), py::arg("input_text"))
+        .def("forward", [](Sam3Infer &self, py::array_t<uint8_t> input_image, const std::string &input_text, const std::vector<std::pair<std::string, std::array<float, 4>>> &boxes)
+             {
+            cv::Mat img = numpy_to_mat(input_image);
+            return self.forward(img, input_text, boxes, nullptr); }, py::arg("input_image"), py::arg("input_text"), py::arg("boxes"))
+        .def("forwards", [](Sam3Infer &self, std::vector<py::array_t<uint8_t>> input_images, const std::string &input_text, const std::vector<std::pair<std::string, std::array<float, 4>>> &boxes)
+            {
+            std::vector<cv::Mat> imgs;
+            for (auto &array : input_images)
+            {
+                imgs.push_back(numpy_to_mat(array));
+            }
+            return self.forwards(imgs, input_text, boxes, nullptr); }, py::arg("input_images"), py::arg("input_text"), py::arg("boxes"));
 }

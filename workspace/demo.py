@@ -21,42 +21,72 @@ def get_random_color(seed_str):
     random.seed(hash(seed_str))
     return (random.randint(50, 255), random.randint(50, 255), random.randint(50, 255))
 
+
 def osd(image, results):
     """
     可视化函数：绘制 Mask, Box 和 Label
+    适配 Box-based Mask (Mask 尺寸等于 Box 尺寸，而非全图尺寸)
     """
-    if not results: 
+    if image is None or not results: 
         return image
     
     vis_img = image.copy()
+    h_img, w_img = vis_img.shape[:2] # 获取原图尺寸
     
     for obj in results:
         # 获取颜色 (根据类别名)
         color = get_random_color(obj.class_name)
         
-        # 1. 绘制 Mask (半透明)
-        if obj.segmentation:
+        # 1. 先获取 Box 坐标
+        x1, y1, x2, y2 = int(obj.box.left), int(obj.box.top), int(obj.box.right), int(obj.box.bottom)
+        
+        # 边界保护：确保坐标在图片范围内
+        x1 = max(0, min(x1, w_img))
+        y1 = max(0, min(y1, h_img))
+        x2 = max(0, min(x2, w_img))
+        y2 = max(0, min(y2, h_img))
+        
+        box_w = x2 - x1
+        box_h = y2 - y1
+        
+        # 2. 绘制 Mask (半透明)
+        # 只有当 Box 有效且有 Mask 数据时才绘制
+        if box_w > 0 and box_h > 0 and obj.segmentation:
             mask = obj.segmentation.mask
             if mask is not None and mask.size > 0:
-                colored_mask = np.zeros_like(vis_img)
-                colored_mask[:, :, 0] = color[0]
-                colored_mask[:, :, 1] = color[1]
-                colored_mask[:, :, 2] = color[2]
+                # C++ 返回的 mask 尺寸可能因 float->int 转换误差与 Python 计算的 box 尺寸差 1-2 像素
+                # 必须强制 resize 到当前计算的 ROI 大小
+                if mask.shape[0] != box_h or mask.shape[1] != box_w:
+                    mask = cv2.resize(mask, (box_w, box_h), interpolation=cv2.INTER_NEAREST)
                 
-                # 仅在 mask 区域混合颜色
+                # 提取原图中的 ROI (Region of Interest)
+                roi = vis_img[y1:y2, x1:x2]
+                
+                # 创建彩色层 (大小等于 ROI)
+                colored_layer = np.zeros_like(roi)
+                colored_layer[:] = color
+                
+                # 找到 Mask 的前景区域
                 mask_indices = mask > 0
-                vis_img[mask_indices] = cv2.addWeighted(
-                    vis_img[mask_indices], 0.5, 
-                    colored_mask[mask_indices], 0.5, 0
-                )
+                
+                # 仅在 ROI 内进行半透明叠加
+                if mask_indices.any():
+                    roi[mask_indices] = cv2.addWeighted(
+                        roi[mask_indices], 0.5, 
+                        colored_layer[mask_indices], 0.5, 0
+                    )
+                    
+                    # 将处理好的 ROI 放回原图
+                    vis_img[y1:y2, x1:x2] = roi
         
-        # 2. 绘制 Box
-        x1, y1, x2, y2 = int(obj.box.left), int(obj.box.top), int(obj.box.right), int(obj.box.bottom)
+        # 3. 绘制 Box
         cv2.rectangle(vis_img, (x1, y1), (x2, y2), color, 2)
         
-        # 3. 绘制标签和置信度
+        # 4. 绘制标签和置信度
         label_text = f"{obj.class_name}: {obj.score:.2f}"
-        cv2.putText(vis_img, label_text, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        # 确保文字不画出界
+        text_y = max(y1 - 5, 20)
+        cv2.putText(vis_img, label_text, (x1, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
         
     return vis_img
 

@@ -14,6 +14,8 @@
 ## 环境
 - 服务器    
 ubuntu 24.04
+- 显卡
+NVIDIA GeForce RTX 4090
 - 镜像  
 nvcr.io/nvidia/tensorrt:25.10-py3
 
@@ -35,6 +37,9 @@ nvcr.io/nvidia/tensorrt:25.10-py3
 </div>
 
 
+## 速度
+`50ms`左右
+
 ## 编译执行
 生成可执行文件 `pro`
 ```
@@ -44,9 +49,6 @@ make pro
 ```
 make all
 ```
-
-## TODO
-1. 进一步优化识别速度
 
 ## 引用
 - 参考实现： `https://github.com/jamjamjon/usls.git`

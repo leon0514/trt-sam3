@@ -17,49 +17,33 @@ ubuntu 24.04
 - 镜像  
 nvcr.io/nvidia/tensorrt:25.10-py3
 
-## 编译执行
-```shell
-make pro
-cd workspace
-./pro
-```
-```
-TensorRT-Engine 🌱 is Dynamic Shape model
-Inputs: 2
-        0.input_ids : {-1 x 32} [int64]
-        1.attention_mask : {-1 x 32} [int64]
-Outputs: 2
-        0.text_features : {-1 x 32 x 256} [float32]
-        1.text_mask : {-1 x 32} [bool]
-------------------------------------------------------
-------------------------------------------------------
-TensorRT-Engine 🌱 is Dynamic Shape model
-Inputs: 6
-        0.fpn_feat_0 : {-1 x 256 x 288 x 288} [float32]
-        1.fpn_feat_1 : {-1 x 256 x 144 x 144} [float32]
-        2.fpn_feat_2 : {-1 x 256 x 72 x 72} [float32]
-        3.fpn_pos_2 : {-1 x 256 x 72 x 72} [float32]
-        4.prompt_features : {-1 x -1 x 256} [float32]
-        5.prompt_mask : {-1 x -1} [bool]
-Outputs: 4
-        0.pred_masks : {-1 x 200 x 288 x 288} [float32]
-        1.pred_boxes : {-1 x 200 x 4} [float32]
-        2.pred_logits : {-1 x 200} [float32]
-        3.presence_logits : {-1 x 1} [float32]
-------------------------------------------------------
-Inference engine loaded successfully.
-Iteration 1: Detected 66 objects.
-Iteration 2: Detected 66 objects.
-Iteration 3: Detected 66 objects.
-Iteration 4: Detected 66 objects.
-Iteration 5: Detected 66 objects.
-[⏰ 10 inferences] : 1227.49890 ms
-Detected 66 objects.
-```
 ## 识别效果
+- 多单词 文本提示
+可以同时识别多个类别
 <div align="center">
-   <img src="https://raw.githubusercontent.com/leon0514/trt-sam3/refs/heads/main/workspace/assert/result.jpg" width="80%"/>
+   <img src="https://raw.githubusercontent.com/leon0514/trt-sam3/refs/heads/main/workspace/assert/demo_multi_class.jpg" width="80%"/>
 </div>
+
+- 几何提示
+<div align="center">
+   <img src="https://raw.githubusercontent.com/leon0514/trt-sam3/refs/heads/main/workspace/assert/demo_box.jpg" width="80%"/>
+</div>
+
+- 混合提示
+<div align="center">
+   <img src="https://raw.githubusercontent.com/leon0514/trt-sam3/refs/heads/main/workspace/assert/demo_mixed.jpg" width="80%"/>
+</div>
+
+
+## 编译执行
+生成可执行文件 `pro`
+```
+make pro
+```
+生成python绑定包 `trtsam3.so`
+```
+make all
+```
 
 ## 引用
 - 参考实现： `https://github.com/jamjamjon/usls.git`

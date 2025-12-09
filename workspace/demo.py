@@ -1,175 +1,218 @@
 import cv2
 import numpy as np
-import time
+import os
+import random
 from tokenizers import Tokenizer
 import trtsam3  
 
+# --- 配置路径 ---
+VISION_MODEL = "model/vision-encoder.engine"
+TEXT_MODEL = "model/text-encoder.engine"
+DECODER_MODEL = "model/decoder.engine"
+GEOMETRY_MODEL = "model/geometry-encoder.engine" # 如果需要框/点提示，必须加载
+TOKENIZER_PATH = "tokenizer.json"
+OUTPUT_DIR = "output"
+
+# 确保输出目录存在
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+def get_random_color(seed_str):
+    """根据字符串生成固定颜色"""
+    random.seed(hash(seed_str))
+    return (random.randint(50, 255), random.randint(50, 255), random.randint(50, 255))
 
 def osd(image, results):
-    if not results: return image
-    for idx, obj in enumerate(results):
+    """
+    可视化函数：绘制 Mask, Box 和 Label
+    """
+    if not results: 
+        return image
+    
+    vis_img = image.copy()
+    
+    for obj in results:
+        # 获取颜色 (根据类别名)
+        color = get_random_color(obj.class_name)
+        
+        # 1. 绘制 Mask (半透明)
         mask = obj.segmentation.mask
-        if mask is None or mask.size == 0: continue
-
-        colored_mask = np.zeros_like(image)
-        colored_mask[:, :, 2] = mask # Red channel
+        if mask is not None and mask.size > 0:
+            colored_mask = np.zeros_like(vis_img)
+            colored_mask[:, :, 0] = color[0]
+            colored_mask[:, :, 1] = color[1]
+            colored_mask[:, :, 2] = color[2]
+            
+            # 仅在 mask 区域混合颜色
+            mask_indices = mask > 0
+            vis_img[mask_indices] = cv2.addWeighted(
+                vis_img[mask_indices], 0.5, 
+                colored_mask[mask_indices], 0.5, 0
+            )
         
-        alpha = 0.5
-        mask_indices = mask > 0
-        image[mask_indices] = cv2.addWeighted(image[mask_indices], 1 - alpha, colored_mask[mask_indices], alpha, 0)
+        # 2. 绘制 Box
+        x1, y1, x2, y2 = int(obj.box.left), int(obj.box.top), int(obj.box.right), int(obj.box.bottom)
+        cv2.rectangle(vis_img, (x1, y1), (x2, y2), color, 2)
         
-        x1, y1, x2, y2 = obj.box.left, obj.box.top, obj.box.right, obj.box.bottom
-        cv2.rectangle(image, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
-    return image
+        # 3. 绘制标签和置信度
+        label_text = f"{obj.class_name}: {obj.score:.2f}"
+        cv2.putText(vis_img, label_text, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        
+    return vis_img
 
-def get_engine_and_tokenizer(gpu_id=0):
+def init_system(gpu_id=0):
     print(f"Initializing engine on GPU {gpu_id}...")
+    
+    # 1. 创建推理引擎
     engine = trtsam3.Sam3Infer.create_instance(
-        vision_path="model/vision-encoder.engine",
-        text_path="model/text-encoder.engine",
-        geometry_path="",
-        decoder_path="model/decoder.engine",
+        vision_path=VISION_MODEL,
+        text_path=TEXT_MODEL,
+        geometry_path=GEOMETRY_MODEL, 
+        decoder_path=DECODER_MODEL,
         gpu_id=gpu_id,
-        confidence_threshold=0.5
+        confidence_threshold=0.4
     )
     
     if engine is None:
-        raise RuntimeError("Failed to load engine")
+        raise RuntimeError("Failed to load TensorRT engines.")
 
-    tokenizer = Tokenizer.from_file("tokenizer.json")
+    # 2. 加载 Tokenizer
+    if not os.path.exists(TOKENIZER_PATH):
+        raise FileNotFoundError(f"Tokenizer not found at {TOKENIZER_PATH}")
+        
+    tokenizer = Tokenizer.from_file(TOKENIZER_PATH)
     tokenizer.enable_padding(length=32, pad_id=49407)
     tokenizer.enable_truncation(max_length=32)
     
     return engine, tokenizer
 
-def speed_test():
-    engine, tokenizer = get_engine_and_tokenizer(gpu_id=1)
+def register_prompts(engine, tokenizer, text_list):
+    """
+    辅助函数：将文本 Token 化并注册到 C++ 引擎中。
+    """
+    print(f"Registering tokens for: {text_list}")
+    for text in text_list:
+        if not text: continue
+        encoded = tokenizer.encode(text)
+        engine.setup_text_inputs(text, encoded.ids, encoded.attention_mask)
 
-    prompt_text = "helmet"
-    encoded = tokenizer.encode(prompt_text)
-    engine.setup_text_inputs(prompt_text, encoded.ids, encoded.attention_mask)
-
-    image = cv2.imread("images/persons.jpg")
-    if image is None:
-        print("Image not found")
-        return
-    
-    # 构造 Input 对象
-    input_obj = trtsam3.Sam3Input(image, prompt_text)
-    
-    print("Warm up ...")
-    for i in range(5):
-        engine.forward(input_obj)
-    
-    print("Benchmarking 100 iterations...")
-    start = time.time()
-    for i in range(100):
-        # 仍然使用 forward 接口，但传入 Input 对象
-        engine.forward(input_obj)
-    end = time.time()
-    
-    avg_time = (end - start) * 1000 / 100
-    fps = 1000 / avg_time
-    print(f"Avg Latency: {avg_time:.2f} ms, FPS: {fps:.2f}")
-
-    # 测试 Batch Forward (Sam3Input 列表)
-    batch_inputs = [input_obj, input_obj, input_obj, input_obj] # Batch=4
-    print("\nBenchmarking Batch=4 ...")
-    start = time.time()
-    for i in range(25): # 100 images total
-        engine.forwards(batch_inputs)
-    end = time.time()
-    avg_time_batch = (end - start) * 1000 / 25
-    print(f"Batch(4) Latency: {avg_time_batch:.2f} ms, FPS: {1000/(avg_time_batch/4):.2f}")
-
-
-def run_box_prompt_test():
+# ==============================================================================
+# 场景 1: 框提示 (Box Prompt) 测试
+# ==============================================================================
+def demo_box_prompt(engine):
     print("\n=== Running Box Prompt Test ===")
-    
-    # 1. 初始化引擎 (必须包含 geometry_path)
-    engine = trtsam3.Sam3Infer.create_instance(
-        vision_path="model/vision-encoder.engine",
-        text_path="model/text-encoder.engine",
-        geometry_path="model/geometry-encoder.engine", # 关键：加载 Geometry
-        decoder_path="model/decoder.engine",
-        gpu_id=0,
-        confidence_threshold=0.5
-    )
-    
-    if engine is None:
-        print("Failed to load engine")
-        return
-
-    # 2. 读取图像
-    image = cv2.imread("images/smx.jpg")
+    image_path = "images/persons.jpg"
+    image = cv2.imread(image_path)
     if image is None:
-        print("Image not found")
+        print(f"Skipping: {image_path} not found.")
         return
 
-    box_prompt = ("pos", (1966, 620, 2118, 816))
+    # 定义一个框 (格式: C++ std::pair<string, array<float,4>>)
+    # Python 对应: ("pos", [x1, y1, x2, y2])
+    # 注意：坐标需根据实际图片调整
+    box_prompt = ("pos", [747, 319, 768, 384]) 
     
-    # 4. 构造输入对象
-    # 此时 text_prompt 传空字符串 ""
-    input_obj = trtsam3.Sam3Input(image, "", [box_prompt])
+    prompt_unit = trtsam3.Sam3PromptUnit("", [box_prompt])
+    input_obj = trtsam3.Sam3Input(image, [prompt_unit])
 
-    # 5. 推理
-    start = time.time()
-    results = engine.forward(input_obj)
-    end = time.time()
-    print(f"Inference time: {(end-start)*1000:.2f} ms")
+    # 推理
+    results = engine.forwards([input_obj])[0] # 获取第一张图的结果
+    
+    # 可视化
+    # 画出提示框 (蓝色) 以便对比
+    bx1, by1, bx2, by2 = map(int, box_prompt[1])
+    cv2.rectangle(image, (bx1, by1), (bx2, by2), (255, 0, 0), 2)
+    cv2.putText(image, "Prompt Box", (bx1, by1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 1)
+
+    vis_img = osd(image, results)
+    
+    save_path = os.path.join(OUTPUT_DIR, "demo_box.jpg")
+    cv2.imwrite(save_path, vis_img)
+    print(f"Result saved to {save_path}")
+
+# ==============================================================================
+# 场景 2: 单图多文本 Prompt (One Vision, Multiple Prompts)
+# 这是本次 C++ 代码优化的核心体现
+# ==============================================================================
+def demo_multi_class_prompt(engine, tokenizer):
+    print("\n=== Running Multi-Class Prompt Test ===")
+    image_path = "images/persons.jpg"
+    image = cv2.imread(image_path)
+    if image is None:
+        print(f"Skipping: {image_path} not found.")
+        return
+
+    # 我们想要在这张图中同时识别 "person" 和 "glasses" (或者其他物体)
+    prompts_text = ["tie", "glasses", "head"]
+    
+    # 1. 注册 Token (重要)
+    register_prompts(engine, tokenizer, prompts_text)
+
+    # 2. 构造 Prompt 列表
+    # C++ 内部会将这 3 个 Prompt 复用同一份 Vision Feature
+    prompt_units = []
+    for txt in prompts_text:
+        prompt_units.append(trtsam3.Sam3PromptUnit(txt))
+    
+    # 3. 构造 Input 对象
+    input_obj = trtsam3.Sam3Input(image, prompt_units)
+
+    # 4. 推理
+    # engine.forwards 接受一个 inputs 列表，这里我们只传一张图
+    batch_results = engine.forwards([input_obj])
+    
+    # 5. 获取结果
+    # batch_results[0] 包含了该张图片下所有 Prompt 检测到的物体
+    image_results = batch_results[0]
+    
+    print(f"Detected {len(image_results)} objects across {len(prompts_text)} prompts.")
+    for obj in image_results:
+        print(f" - Found {obj.class_name} with score {obj.score:.3f}")
 
     # 6. 可视化
-    # 先画 Prompt Box (蓝色)
-    x1, y1, x2, y2 = map(int, box_prompt[1])
-    cv2.rectangle(image, (x1, y1), (x2, y2), (255, 0, 0), 2)
+    vis_img = osd(image, image_results)
     
-    for obj in results:
-        mask = obj.segmentation.mask
-        if mask is not None:
-            colored_mask = np.zeros_like(image)
-            colored_mask[:, :, 1] = 255 # Green
-            image[mask > 0] = cv2.addWeighted(image[mask > 0], 0.5, colored_mask[mask > 0], 0.5, 0)
-        
-        # 预测框
-        b = obj.box
-        cv2.rectangle(image, (int(b.left), int(b.top)), (int(b.right), int(b.bottom)), (0, 255, 0), 2)
+    save_path = os.path.join(OUTPUT_DIR, "demo_multi_class.jpg")
+    cv2.imwrite(save_path, vis_img)
+    print(f"Result saved to {save_path}")
 
-    cv2.imwrite("output/py_box_result.jpg", image)
-    print("Saved result to output/py_box_result.jpg")
+# ==============================================================================
+# 场景 3: 混合 Prompt (文本 + 框)
+# ==============================================================================
+def demo_mixed_prompt(engine, tokenizer):
+    print("\n=== Running Mixed Prompt Test ===")
+    image_path = "images/persons.jpg"
+    image = cv2.imread(image_path)
+    if image is None: return
 
-def run_visualization():
-    engine, tokenizer = get_engine_and_tokenizer(gpu_id=1)
+    target_text = "tie"
+    register_prompts(engine, tokenizer, [target_text])
 
-    prompt_text = "person"
-    encoded = tokenizer.encode(prompt_text)
-    engine.setup_text_inputs(prompt_text, encoded.ids, encoded.attention_mask)
-
-    image1 = cv2.imread("images/persons.jpg")
-    if image1 is None:
-        print("Image not found")
-        return
-
-    image2 = cv2.imread("images/smx.jpg")
-    if image2 is None:
-        print("Image not found")
-        return
+    box_constraint = ("pos", [747, 319, 768, 384])
     
-    # 单图推理
-    input_obj1 = trtsam3.Sam3Input(image1, prompt_text)
-    input_obj2 = trtsam3.Sam3Input(image2, prompt_text)
-    results = engine.forwards([input_obj1, input_obj2])
+    prompt_unit = trtsam3.Sam3PromptUnit(target_text, [box_constraint])
+    input_obj = trtsam3.Sam3Input(image, [prompt_unit])
     
-    # 可视化
-    osd_image = osd(image1.copy(), results[0])
-    cv2.imwrite("output/py_result1.jpg", osd_image)
-    print("Saved result to output/py_result.jpg")
-
-    # 可视化
-    osd_image = osd(image2.copy(), results[1])
-    cv2.imwrite("output/py_result2.jpg", osd_image)
-    print("Saved result to output/py_result.jpg")
+    results = engine.forwards([input_obj])[0]
+    
+    # 可视化提示框
+    bx1, by1, bx2, by2 = map(int, box_constraint[1])
+    cv2.rectangle(image, (bx1, by1), (bx2, by2), (255, 255, 0), 2)
+    
+    vis_img = osd(image, results)
+    cv2.imwrite(os.path.join(OUTPUT_DIR, "demo_mixed.jpg"), vis_img)
+    print(f"Result saved to {os.path.join(OUTPUT_DIR, 'demo_mixed.jpg')}")
 
 if __name__ == "__main__":
-    run_box_prompt_test()
-    run_visualization()
-    speed_test()
+    try:
+        # 初始化资源
+        engine, tokenizer = init_system(gpu_id=0)
+        
+        # 运行不同的 Demo
+        demo_multi_class_prompt(engine, tokenizer) # 核心新功能
+        demo_box_prompt(engine)                    # 纯几何提示
+        demo_mixed_prompt(engine, tokenizer)       # 混合提示
+        
+        print("\nAll demos finished successfully.")
+        
+    except Exception as e:
+        print(f"\nError occurred: {e}")

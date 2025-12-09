@@ -3,7 +3,7 @@
 #include <pybind11/numpy.h> // py::array_t
 #include <opencv2/opencv.hpp>
 
-#include "infer/sam3infer.hpp" // 包含 Sam3Input 和 Sam3Infer
+#include "infer/sam3infer.hpp" 
 #include "common/object.hpp"
 
 namespace py = pybind11;
@@ -46,7 +46,7 @@ cv::Mat numpy_to_mat(py::array_t<uint8_t> &input)
 
 PYBIND11_MODULE(trtsam3, m)
 {
-    m.doc() = "Python bindings for Sam3Infer (CPM-ready) using pybind11";
+    m.doc() = "Python bindings for Sam3Infer (One Vision, Many Prompts) using pybind11";
 
     // --- 1. ObjectType 枚举 ---
     py::enum_<object::ObjectType>(m, "ObjectType")
@@ -57,7 +57,7 @@ PYBIND11_MODULE(trtsam3, m)
         .value("SEGMENTATION", object::ObjectType::SEGMENTATION)
         .export_values();
 
-    // --- 2. 基础结果结构体 (Box, DetectionBox 等) ---
+    // --- 2. 基础结果结构体 ---
     py::class_<object::Box>(m, "Box")
         .def(py::init<float, float, float, float>(),
              py::arg("left") = 0, py::arg("top") = 0, py::arg("right") = 0, py::arg("bottom") = 0)
@@ -85,32 +85,44 @@ PYBIND11_MODULE(trtsam3, m)
         .def("__repr__", [](const object::DetectionBox &d)
              { return "<DetectionBox class='" + d.class_name + "' score=" + std::to_string(d.score) + ">"; });
 
-    // --- 3. 新增 Sam3Input 绑定 ---
-    // Sam3Input 在 C++ 中定义为 struct Sam3Input { cv::Mat image; string text; vector<pair<string, array<float,4>>> boxes; }
-    // 我们需要在 Python 端方便构造它。
+    // --- 3. 新增 Sam3PromptUnit 绑定 ---
+    // 这是支持单图多 Prompt 的核心单元
+    py::class_<Sam3PromptUnit>(m, "Sam3PromptUnit")
+        .def(py::init<>())
+        .def(py::init<const std::string &, const std::vector<BoxPrompt> &>(),
+             py::arg("text"), py::arg("boxes") = std::vector<BoxPrompt>())
+        .def_readwrite("text", &Sam3PromptUnit::text)
+        .def_readwrite("boxes", &Sam3PromptUnit::boxes)
+        .def("__repr__", [](const Sam3PromptUnit &u) {
+            return "<Sam3PromptUnit text='" + u.text + "' boxes_count=" + std::to_string(u.boxes.size()) + ">";
+        });
 
+    // --- 4. 修改 Sam3Input 绑定 ---
     py::class_<Sam3Input>(m, "Sam3Input")
         .def(py::init<>())
-        // 构造函数：支持 (Image, Text, Boxes)
+        
+        // 构造函数 1: 完整模式 (Image, List[PromptUnit])
+        .def(py::init([](py::array_t<uint8_t> img, const std::vector<Sam3PromptUnit> &prompts)
+                      { return Sam3Input(numpy_to_mat(img), prompts); }),
+             py::arg("image"), py::arg("prompts"))
+
+        // 构造函数 2: 兼容模式 (Image, Single Text, Single Box List)
+        // 方便只做一个 prompt 的时候调用，底层会自动转成 vector<Sam3PromptUnit>
         .def(py::init([](py::array_t<uint8_t> img, const std::string &txt, const std::vector<BoxPrompt> &boxes)
                       { return Sam3Input(numpy_to_mat(img), txt, boxes); }),
              py::arg("image"), py::arg("text_prompt") = "", py::arg("box_prompts") = std::vector<BoxPrompt>())
 
         // 属性读写
-        .def_readwrite("text_prompt", &Sam3Input::text_prompt)
-        .def_readwrite("box_prompts", &Sam3Input::box_prompts)
-        // Image 特殊处理：读时转 numpy，写时转 Mat
+        .def_readwrite("prompts", &Sam3Input::prompts) // 暴露 prompts 列表给 Python
+
+        // Image 特殊处理
         .def_property("image", [](Sam3Input &self)
                       { return mat_to_numpy(self.image); }, [](Sam3Input &self, py::array_t<uint8_t> array)
                       { self.image = numpy_to_mat(array).clone(); });
 
-    // --- 4. Sam3Infer 绑定 ---
-    py::class_<Sam3Infer, std::shared_ptr<Sam3Infer>>(m, "Sam3Infer") // 使用 shared_ptr 持有
-                                                                      // 移除原有构造函数绑定，改用静态工厂
-                                                                      // 但 pybind11 class 还是需要让 Python 知道它是谁。
-                                                                      // 通常我们会绑定一个空的 init 或者把 create_instance 暴露为 static method。
-
-        // 静态工厂方法：create_instance
+    // --- 5. Sam3Infer 绑定 ---
+    py::class_<Sam3Infer, std::shared_ptr<Sam3Infer>>(m, "Sam3Infer")
+        // 静态工厂方法
         .def_static("create_instance",
                     static_cast<std::shared_ptr<Sam3Infer> (*)(const std::string &, const std::string &, const std::string &, const std::string &, int, float)>(&Sam3Infer::create_instance),
                     py::arg("vision_path"), py::arg("text_path"), py::arg("geometry_path"), py::arg("decoder_path"),
@@ -125,18 +137,7 @@ PYBIND11_MODULE(trtsam3, m)
             std::copy(input_ids.begin(), input_ids.end(), arr_ids.begin());
             std::copy(attention_mask.begin(), attention_mask.end(), arr_mask.begin());
             self.setup_text_inputs(text, arr_ids, arr_mask); }, py::arg("text"), py::arg("input_ids"), py::arg("attention_mask"))
-
-        // --- 核心推理接口 (基于 Sam3Input) ---
-
-        // Single Input Forward
-        .def("forward", [](Sam3Infer &self, const Sam3Input &input)
-             {
-            py::gil_scoped_release release; // 释放 GIL 以便多线程并行
-            // 注意：这里传入的是 input 的引用。input 中的 cv::Mat 可能会被深拷贝或引用
-            // 由于 Python 端 Sam3Input 持有 cv::Mat，这通常是安全的。
-            return self.forward(input, nullptr); }, py::arg("input"))
-
-        // Batch Inputs Forward
+        
         .def("forwards", [](Sam3Infer &self, const std::vector<Sam3Input> &inputs)
              {
             py::gil_scoped_release release;

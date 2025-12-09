@@ -138,8 +138,8 @@ PYBIND11_MODULE(trtsam3, m)
             std::copy(attention_mask.begin(), attention_mask.end(), arr_mask.begin());
             self.setup_text_inputs(text, arr_ids, arr_mask); }, py::arg("text"), py::arg("input_ids"), py::arg("attention_mask"))
         
-        .def("forwards", [](Sam3Infer &self, const std::vector<Sam3Input> &inputs)
+        .def("forwards", [](Sam3Infer &self, const std::vector<Sam3Input> &inputs, bool return_mask)
              {
             py::gil_scoped_release release;
-            return self.forwards(inputs, nullptr); }, py::arg("inputs"));
+            return self.forwards(inputs, return_mask, nullptr); }, py::arg("inputs"), py::arg("return_mask") = false);
 }

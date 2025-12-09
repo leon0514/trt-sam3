@@ -461,7 +461,7 @@ bool Sam3Infer::decode(int total_prompts, int prompt_len, void *stream)
                                  s);
 }
 
-void Sam3Infer::postprocess(InferResult &image_result, int global_prompt_idx, int image_idx, const std::string &label, void *stream)
+void Sam3Infer::postprocess(InferResult &image_result, int global_prompt_idx, int image_idx, const std::string &label, bool return_mask, void *stream)
 {
     cudaStream_t s = (cudaStream_t)stream;
     
@@ -506,41 +506,112 @@ void Sam3Infer::postprocess(InferResult &image_result, int global_prompt_idx, in
         cudaMemcpyAsync(h_scores.data(), d_filter_scores, count * sizeof(float), cudaMemcpyDeviceToHost, s);
         cudaMemcpyAsync(h_indices.data(), d_filter_indices, count * sizeof(int), cudaMemcpyDeviceToHost, s);
 
-        // Mask 处理
-        size_t mask_buf_sz = count * original_image_sizes_[image_idx].second * original_image_sizes_[image_idx].first;
-        mask_buffer_.gpu(mask_buf_sz);
-        mask_buffer_.cpu(mask_buf_sz);
-
-        // 使用对应 image_idx 的 matrix
-        float* d_mask_matrix = mask_affine_matrix_.gpu() + image_idx * 6;
-
-        for (int i = 0; i < count; ++i)
+        if (!return_mask)
         {
-            int idx = h_indices[i];
-            float *src = d_pred_masks + idx * mask_height_ * mask_width_;
-            uint8_t *dst = mask_buffer_.gpu() + i * original_image_sizes_[image_idx].second * original_image_sizes_[image_idx].first;
-
-            warp_affine_bilinear_single_channel_mask_plane(
-                src, mask_width_, mask_width_, mask_height_,
-                dst, original_image_sizes_[image_idx].first, original_image_sizes_[image_idx].second,
-                d_mask_matrix, 0, s);
+            for (int i = 0; i < count; ++i)
+            {
+                float *b = h_boxes.data() + i * 4;
+                image_result.push_back(object::createBox(b[0], b[1], b[2], b[3], h_scores[i], -1, label));
+            }
+            return;
         }
 
-        cudaMemcpyAsync(mask_buffer_.cpu(), mask_buffer_.gpu(), mask_buf_sz, cudaMemcpyDeviceToHost, s);
-        cudaStreamSynchronize(s);
+        box_affine_matrices_.cpu(count * 6); 
+        box_affine_matrices_.gpu(count * 6); 
+        float* h_base_matrix = mask_affine_matrix_.cpu() + image_idx * 6; // 原图的基础变换矩阵
+        float* h_box_matrices = box_affine_matrices_.cpu();
+
+        // 计算所有 Box 的总像素面积，以便分配紧凑的 buffer
+        size_t total_mask_pixels = 0;
+        std::vector<size_t> mask_offsets(count);
+        std::vector<cv::Size> mask_sizes(count);
 
         for (int i = 0; i < count; ++i)
         {
             float *b = h_boxes.data() + i * 4;
-            cv::Mat bin_mask(original_image_sizes_[image_idx].second, original_image_sizes_[image_idx].first, CV_8U,
-                             mask_buffer_.cpu() + i * original_image_sizes_[image_idx].second * original_image_sizes_[image_idx].first);
-            // 结果追加到传入的 image_result 中
+            int x1 = (int)b[0];
+            int y1 = (int)b[1];
+            int x2 = (int)b[2];
+            int y2 = (int)b[3];
+            
+            // 限制边界防止越界
+            int img_w = original_image_sizes_[image_idx].first;
+            int img_h = original_image_sizes_[image_idx].second;
+            x1 = std::max(0, x1); y1 = std::max(0, y1);
+            x2 = std::min(img_w, x2); y2 = std::min(img_h, y2);
+            
+            int box_w = std::max(1, x2 - x1);
+            int box_h = std::max(1, y2 - y1);
+            
+            mask_sizes[i] = cv::Size(box_w, box_h);
+            mask_offsets[i] = total_mask_pixels;
+            total_mask_pixels += box_w * box_h;
+
+            // --- 核心数学逻辑 ---
+            // 原始矩阵 M 将 (dst_x, dst_y) 映射到 source。
+            // 现在的 dst 是 box 内部坐标 (bx, by)。
+            // 关系: dst_x_global = bx + box_x1
+            //       dst_y_global = by + box_y1
+            // Src = M * Dst_Global
+            // Src = M * (Dst_Box + Offset)
+            // Src = M * Dst_Box + (M * Offset)
+            // 所以，新的平移分量 Tx' = M00*x1 + M01*y1 + Tx
+            //      新的平移分量 Ty' = M10*x1 + M11*y1 + Ty
+            
+            float* m_dst = h_box_matrices + i * 6;
+            // 复制旋转缩放分量
+            m_dst[0] = h_base_matrix[0]; m_dst[1] = h_base_matrix[1];
+            m_dst[3] = h_base_matrix[3]; m_dst[4] = h_base_matrix[4];
+            
+            // 计算新的平移分量
+            m_dst[2] = h_base_matrix[0] * x1 + h_base_matrix[1] * y1 + h_base_matrix[2];
+            m_dst[5] = h_base_matrix[3] * x1 + h_base_matrix[4] * y1 + h_base_matrix[5];
+        }
+
+        // 2. 分配 Mask 显存 (按需分配)
+        mask_buffer_.gpu(total_mask_pixels);
+        mask_buffer_.cpu(total_mask_pixels);
+        
+        // 上传矩阵
+        cudaMemcpyAsync(box_affine_matrices_.gpu(), box_affine_matrices_.cpu(), count * 6 * sizeof(float), cudaMemcpyHostToDevice, s);
+
+        // 3. 循环发射 Kernel
+        // 这里的循环开销很小，因为只是发射 Kernel，不做同步
+        for (int i = 0; i < count; ++i)
+        {
+            int idx = h_indices[i];
+            float *src = d_pred_masks + idx * mask_height_ * mask_width_;
+            uint8_t *dst = mask_buffer_.gpu() + mask_offsets[i];
+            float *d_matrix = box_affine_matrices_.gpu() + i * 6;
+
+            warp_affine_bilinear_single_channel_mask_plane(
+                src, mask_width_, mask_width_, mask_height_,
+                dst, mask_sizes[i].width, mask_sizes[i].height, // 目标尺寸变为 Box 尺寸
+                d_matrix, 0, s);
+        }
+
+        // 4. 拷贝回 CPU
+        cudaMemcpyAsync(mask_buffer_.cpu(), mask_buffer_.gpu(), total_mask_pixels, cudaMemcpyDeviceToHost, s);
+        cudaStreamSynchronize(s); // Sync 2: 等待所有 Mask 生成完成
+
+        // 5. 组装结果
+        for (int i = 0; i < count; ++i)
+        {
+            float *b = h_boxes.data() + i * 4;
+            // 这里的 mask_ptr 指向的是紧凑排列的 Mask 数据
+            uint8_t *mask_ptr = mask_buffer_.cpu() + mask_offsets[i];
+            
+            // 构造 cv::Mat，注意它现在是 Box 大小，而不是全图大小
+            cv::Mat bin_mask(mask_sizes[i].height, mask_sizes[i].width, CV_8U, mask_ptr);
+            
+            // 结果追加
+            // 客户端或可视化代码需要知道 mask 是相对于 box 的 (SegmentationBox 通常隐含了这个逻辑)
             image_result.push_back(object::createSegmentationBox(b[0], b[1], b[2], b[3], bin_mask.clone(), h_scores[i], -1, label));
         }
     }
 }
 
-InferResultArray Sam3Infer::forwards(const std::vector<Sam3Input> &inputs, void *stream)
+InferResultArray Sam3Infer::forwards(const std::vector<Sam3Input> &inputs, bool return_mask, void *stream)
 {
     original_image_sizes_.clear();
     if (inputs.empty()) return {};
@@ -648,7 +719,7 @@ InferResultArray Sam3Infer::forwards(const std::vector<Sam3Input> &inputs, void 
                 lbl = inputs[i].prompts[p].text;
                 if(lbl.empty()) lbl = "object";
             }
-            postprocess(results[i], global_idx, i, lbl, stream);
+            postprocess(results[i], global_idx, i, lbl, return_mask, stream);
             global_idx++;
         }
     }

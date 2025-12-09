@@ -35,19 +35,20 @@ def osd(image, results):
         color = get_random_color(obj.class_name)
         
         # 1. 绘制 Mask (半透明)
-        mask = obj.segmentation.mask
-        if mask is not None and mask.size > 0:
-            colored_mask = np.zeros_like(vis_img)
-            colored_mask[:, :, 0] = color[0]
-            colored_mask[:, :, 1] = color[1]
-            colored_mask[:, :, 2] = color[2]
-            
-            # 仅在 mask 区域混合颜色
-            mask_indices = mask > 0
-            vis_img[mask_indices] = cv2.addWeighted(
-                vis_img[mask_indices], 0.5, 
-                colored_mask[mask_indices], 0.5, 0
-            )
+        if obj.segmentation:
+            mask = obj.segmentation.mask
+            if mask is not None and mask.size > 0:
+                colored_mask = np.zeros_like(vis_img)
+                colored_mask[:, :, 0] = color[0]
+                colored_mask[:, :, 1] = color[1]
+                colored_mask[:, :, 2] = color[2]
+                
+                # 仅在 mask 区域混合颜色
+                mask_indices = mask > 0
+                vis_img[mask_indices] = cv2.addWeighted(
+                    vis_img[mask_indices], 0.5, 
+                    colored_mask[mask_indices], 0.5, 0
+                )
         
         # 2. 绘制 Box
         x1, y1, x2, y2 = int(obj.box.left), int(obj.box.top), int(obj.box.right), int(obj.box.bottom)
@@ -115,7 +116,7 @@ def demo_box_prompt(engine):
     input_obj = trtsam3.Sam3Input(image, [prompt_unit])
 
     # 推理
-    results = engine.forwards([input_obj])[0] # 获取第一张图的结果
+    results = engine.forwards([input_obj], True)[0] # 获取第一张图的结果
     
     # 可视化
     # 画出提示框 (蓝色) 以便对比
@@ -158,15 +159,13 @@ def demo_multi_class_prompt(engine, tokenizer):
 
     # 4. 推理
     # engine.forwards 接受一个 inputs 列表，这里我们只传一张图
-    batch_results = engine.forwards([input_obj])
+    batch_results = engine.forwards([input_obj], True)
     
     # 5. 获取结果
     # batch_results[0] 包含了该张图片下所有 Prompt 检测到的物体
     image_results = batch_results[0]
     
     print(f"Detected {len(image_results)} objects across {len(prompts_text)} prompts.")
-    for obj in image_results:
-        print(f" - Found {obj.class_name} with score {obj.score:.3f}")
 
     # 6. 可视化
     vis_img = osd(image, image_results)
@@ -192,7 +191,7 @@ def demo_mixed_prompt(engine, tokenizer):
     prompt_unit = trtsam3.Sam3PromptUnit(target_text, [box_constraint])
     input_obj = trtsam3.Sam3Input(image, [prompt_unit])
     
-    results = engine.forwards([input_obj])[0]
+    results = engine.forwards([input_obj], True)[0]
     
     # 可视化提示框
     bx1, by1, bx2, by2 = map(int, box_constraint[1])

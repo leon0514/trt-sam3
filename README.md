@@ -5,8 +5,8 @@
 ## 主要特点：
 - 使用 TensorRT 引擎
 - C++ + CUDA 实现预处理/后处理内核，适合在 GPU 上高效运行
-- 支持基于文本提示的 mask/box 输出
-
+- 支持基于文本提示和几何矩形框的 mask/box 输出
+- 利用批处理和内存复用实现同时识别多个文本提示类别
 
 ## ONNX 模型以及 TensorRT 模型导出
 参考 `https://github.com/jamjamjon/usls.git`
@@ -44,6 +44,9 @@ make pro
 ```
 make all
 ```
+
+## TODO
+1. 进一步优化识别速度
 
 ## 引用
 - 参考实现： `https://github.com/jamjamjon/usls.git`

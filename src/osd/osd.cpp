@@ -76,24 +76,21 @@ namespace
     }
 
     // --- 绘制辅助函数 ---
-    void overlay_mask(cv::Mat &image, const cv::Mat &mask, const object::Box &box, const cv::Scalar &color, double alpha)
+    void overlay_mask(cv::Mat &image, const cv::Mat &mask, const object::Box& box, const cv::Scalar &color, double alpha) 
     {
-        if (image.empty() || mask.empty() || image.type() != CV_8UC3 || mask.type() != CV_8UC1)
-            return;
+        if (image.empty() || mask.empty() || image.type() != CV_8UC3 || mask.type() != CV_8UC1) return;
         alpha = std::max(0.0, std::min(1.0, alpha));
-        // cv::Rect roi(cv::Point(box.left, box.top), cv::Point(box.right, box.bottom));
-        // roi &= cv::Rect(0, 0, image.cols, image.rows);
-        // if (roi.area() <= 0)
-        //     return;
+        cv::Rect roi(cv::Point(box.left, box.top), cv::Point(box.right, box.bottom));
+        roi &= cv::Rect(0, 0, image.cols, image.rows);
+        if (roi.area() <= 0) return;
 
-        // cv::Mat image_roi = image(roi);
-
+        cv::Mat image_roi = image(roi);
         cv::Mat resized_mask;
-        cv::resize(mask, resized_mask, image.size());
-        cv::Mat color_patch(image.size(), image.type(), color);
+        cv::resize(mask, resized_mask, roi.size());
+        cv::Mat color_patch(roi.size(), image.type(), color);
         cv::Mat weighted_color;
-        cv::addWeighted(color_patch, alpha, image, 1.0 - alpha, 0.0, weighted_color);
-        weighted_color.copyTo(image, resized_mask);
+        cv::addWeighted(color_patch, alpha, image_roi, 1.0 - alpha, 0.0, weighted_color);
+        weighted_color.copyTo(image_roi, resized_mask);
     }
 
     void drawDashedRectangle(cv::Mat &img, cv::Rect rect, const cv::Scalar &color, int thickness, int dash_size, int gap_size)

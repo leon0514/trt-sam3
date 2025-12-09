@@ -21,12 +21,12 @@ public:
     // -------------------------------------------------------
 
     // 批量推理 (Core API)
-    virtual InferResultArray forwards(const std::vector<Sam3Input> &inputs, void *stream = nullptr) = 0;
+    virtual InferResultArray forwards(const std::vector<Sam3Input> &inputs, bool return_mask = false, void *stream = nullptr) = 0;
 
     // 单个推理 (Wrapper)
-    virtual InferResult forward(const Sam3Input &input, void *stream = nullptr)
+    virtual InferResult forward(const Sam3Input &input, bool return_mask = false, void *stream = nullptr)
     {
-        return forwards({input}, stream)[0];
+        return forwards({input}, return_mask, stream)[0];
     }
 
     // 预设文本 Token (用于 Tokenizer 缓存)

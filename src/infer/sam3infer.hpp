@@ -43,7 +43,7 @@ public:
                            const std::array<int64_t, 32> &attention_mask) override;
 
     // 核心实现
-    virtual InferResultArray forwards(const std::vector<Sam3Input> &inputs, void *stream = nullptr) override;
+    virtual InferResultArray forwards(const std::vector<Sam3Input> &inputs, bool return_mask = false, void *stream = nullptr) override;
 
 private:
     // 内部处理函数
@@ -59,7 +59,7 @@ private:
     bool decode(int total_prompts, int prompt_len, void *stream);
     
     // 后处理现在需要知道当前是第几个 global prompt，以及属于哪张原图
-    void postprocess(InferResult &image_result, int global_prompt_idx, int image_idx, const std::string &label, void *stream);
+    void postprocess(InferResult &image_result, int global_prompt_idx, int image_idx, const std::string &label, bool return_mask, void *stream);
 
     // 内存与维度管理
     void adjust_memory(int image_batch_size, int total_prompts, int max_boxes);
@@ -107,6 +107,7 @@ private:
     tensor::Memory<float> preprocessed_images_;
     std::vector<std::shared_ptr<tensor::Memory<uint8_t>>> original_images_buf_;
     tensor::Memory<float> affine_matrix_;
+    tensor::Memory<float> box_affine_matrices_;
     
     tensor::Memory<float> fpn_feat_0_;
     tensor::Memory<float> fpn_feat_1_;

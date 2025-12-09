@@ -52,7 +52,7 @@ int main()
     prompts.emplace_back("hand");
 
 
-    cv::Mat img1 = cv::imread("images/smx.jpg");
+    cv::Mat img1 = cv::imread("images/persons.jpg");
 
     std::vector<Sam3PromptUnit> prompts1;
     prompts1.emplace_back("person");
@@ -68,15 +68,13 @@ int main()
 
     nv::EventTimer timer;
     timer.start();
-    
-    auto results = engine->forwards(inputs);
-    
+    auto results = engine->forwards(inputs, true);
     float ms = timer.stop();
-    printf("Inference finished in %.2f ms.\n", ms);
+    printf("Inference 200 images finished in %.2f ms.\n", ms);
 
-    osd(img, results[0]);
-    cv::imwrite("output/persons.jpg", img);
-    osd(img1, results[1]);
-    cv::imwrite("output/smx.jpg", img1);
+    // osd(img, results[0]);
+    // cv::imwrite("output/persons.jpg", img);
+    // osd(img1, results[1]);
+    // cv::imwrite("output/smx.jpg", img1);
     return 0;
 }

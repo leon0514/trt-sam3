@@ -6,11 +6,11 @@ from tokenizers import Tokenizer
 import trtsam3  
 
 # --- 配置路径 ---
-VISION_MODEL = "model/vision-encoder.engine"
-TEXT_MODEL = "model/text-encoder.engine"
-DECODER_MODEL = "model/decoder.engine"
-GEOMETRY_MODEL = "model/geometry-encoder.engine" # 如果需要框/点提示，必须加载
-TOKENIZER_PATH = "tokenizer.json"
+VISION_MODEL = "engine-models/vision-encoder.engine"
+TEXT_MODEL = "engine-models/text-encoder.engine"
+DECODER_MODEL = "engine-models/decoder.engine"
+GEOMETRY_MODEL = "engine-models/geometry-encoder.engine" # 如果需要框/点提示，必须加载
+TOKENIZER_PATH = "engine-models/tokenizer.json"
 OUTPUT_DIR = "output"
 
 # 确保输出目录存在

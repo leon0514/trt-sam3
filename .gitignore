@@ -43,3 +43,4 @@ workspace/*
 !workspace/assert/
 !workspace/font/
 !workspace/script/
+!workspace/script/*.sh

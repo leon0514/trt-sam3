@@ -7,7 +7,7 @@ import random
 import os
 
 # 服务地址
-SERVER_URL = "http://localhost:8000/predict"
+SERVER_URL = "http://172.16.20.193:18002/predict"
 OUTPUT_DIR = "client_output"
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)

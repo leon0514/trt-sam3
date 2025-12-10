@@ -7,9 +7,9 @@
 #include <random>
 
 // 模型路径
-const std::string VISION_MODEL = "model/vision-encoder.engine";
-const std::string TEXT_MODEL = "model/text-encoder.engine";
-const std::string DECODER_MODEL = "model/decoder.engine";
+const std::string VISION_MODEL = "engine-models/vision-encoder.engine";
+const std::string TEXT_MODEL = "engine-models/text-encoder.engine";
+const std::string DECODER_MODEL = "engine-models/decoder.engine";
 const std::string GEOMETRY_ENCODER_PATH = ""; 
 const int GPU_ID = 0;
 
@@ -64,13 +64,15 @@ int main()
 
     printf("Input constructed: 1 Image with %zu Prompts.\n", prompts.size());
 
+    for (int i = 0; i < 10; i++)
     engine->forwards(inputs);
 
     nv::EventTimer timer;
     timer.start();
-    auto results = engine->forwards(inputs, true);
+    for (int i = 0; i < 200; i++)
+        auto results = engine->forwards(inputs, true);
     float ms = timer.stop();
-    printf("Inference 200 images finished in %.2f ms.\n", ms);
+    printf("Inference 400 images finished in %.2f ms, fps %f.\n", ms, 400 / (ms / 1000) );
 
     // osd(img, results[0]);
     // cv::imwrite("output/persons.jpg", img);

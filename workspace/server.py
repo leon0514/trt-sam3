@@ -17,7 +17,6 @@ DECODER_PATH = "model/decoder.engine"
 GEOMETRY_ENCODER_PATH = "model/geometry-encoder.engine" 
 TOKENIZER_PATH = "tokenizer.json"
 GPU_ID = 0
-CONFIDENCE_THRESHOLD = 0.4
 
 # 全局变量
 engine = None
@@ -34,8 +33,7 @@ async def lifespan(app: FastAPI):
             text_path=TEXT_ENCODER_PATH,
             geometry_path=GEOMETRY_ENCODER_PATH,
             decoder_path=DECODER_PATH,
-            gpu_id=GPU_ID,
-            confidence_threshold=CONFIDENCE_THRESHOLD
+            gpu_id=GPU_ID
         )
         if engine is None: 
             raise RuntimeError("Engine init failed (returned None)")
@@ -67,6 +65,7 @@ class InferenceRequest(BaseModel):
     image_url: Optional[str] = None
     image_path: Optional[str] = None
     
+    confidence_threshold : float = Field(default=0.65, description="object confidence threshold")
     prompts: List[PromptUnit] = Field(..., description="List of prompts")
     return_mask: bool = Field(default=False, description="If True, returns segmentation masks")
 
@@ -165,9 +164,10 @@ async def predict(req: InferenceRequest):
                 if len(b.bbox) == 4: cpp_boxes.append((b.label, b.bbox))
         sam3_prompts.append(trtsam3.Sam3PromptUnit(p.text, cpp_boxes))
 
+    confidence_threshold = req.confidence_threshold
     # 4. Inference
     try:
-        input_obj = trtsam3.Sam3Input(img, sam3_prompts)
+        input_obj = trtsam3.Sam3Input(img, sam3_prompts, confidence_threshold)
         
         # 传入 req.return_mask 控制是否解码 Mask
         batch_results = engine.forwards([input_obj], req.return_mask)

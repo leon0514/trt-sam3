@@ -41,7 +41,6 @@ std::shared_ptr<InferBase> load(
     const std::string &text_encoder_path,
     const std::string &geometry_encoder_path,
     const std::string &decoder_path,
-    int gpu_id = 0,
-    float confidence_threshold = 0.5f);
+    int gpu_id = 0);
 
 #endif // INFER_HPP__

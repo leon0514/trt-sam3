@@ -15,24 +15,21 @@ public:
         const std::string &vision_encoder_path,
         const std::string &text_encoder_path,
         const std::string &decoder_path,
-        int gpu_id = 0,
-        float confidence_threshold = 0.5f);
+        int gpu_id = 0);
 
     static std::shared_ptr<Sam3Infer> create_instance(
         const std::string &vision_encoder_path,
         const std::string &text_encoder_path,
         const std::string &geometry_encoder_path,
         const std::string &decoder_path,
-        int gpu_id = 0,
-        float confidence_threshold = 0.5f);
+        int gpu_id = 0);
 
     Sam3Infer(
         const std::string &vision_encoder_path,
         const std::string &text_encoder_path,
         const std::string &geometry_encoder_path,
         const std::string &decoder_path,
-        int gpu_id = 0,
-        float confidence_threshold = 0.5f);
+        int gpu_id = 0);
 
     virtual ~Sam3Infer() = default;
 
@@ -59,7 +56,7 @@ private:
     bool decode(int total_prompts, int prompt_len, void *stream);
     
     // 后处理现在需要知道当前是第几个 global prompt，以及属于哪张原图
-    void postprocess(InferResult &image_result, int global_prompt_idx, int image_idx, const std::string &label, bool return_mask, void *stream);
+    void postprocess(InferResult &image_result, int global_prompt_idx, int image_idx, const std::string &label, float confidence_threshold, bool return_mask, void *stream);
 
     // 内存与维度管理
     void adjust_memory(int image_batch_size, int total_prompts, int max_boxes);
@@ -71,7 +68,6 @@ private:
     int input_image_width_ = 1008;
     int input_image_height_ = 1008;
     int gpu_id_ = 0;
-    float confidence_threshold_ = 0.5f;
 
     // 状态变量
     std::vector<std::pair<int, int>> original_image_sizes_;

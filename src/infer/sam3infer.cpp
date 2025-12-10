@@ -10,10 +10,9 @@ std::shared_ptr<InferBase> load(
     const std::string &vision_encoder_path,
     const std::string &text_encoder_path,
     const std::string &decoder_path,
-    int gpu_id,
-    float confidence_threshold)
+    int gpu_id)
 {
-    return Sam3Infer::create_instance(vision_encoder_path, text_encoder_path, decoder_path, gpu_id, confidence_threshold);
+    return Sam3Infer::create_instance(vision_encoder_path, text_encoder_path, decoder_path, gpu_id);
 }
 
 // 静态工厂函数保持不变
@@ -21,12 +20,11 @@ std::shared_ptr<Sam3Infer> Sam3Infer::create_instance(
     const std::string &vision_encoder_path,
     const std::string &text_encoder_path,
     const std::string &decoder_path,
-    int gpu_id,
-    float confidence_threshold)
+    int gpu_id)
 {
     std::string geom_path = "";
     auto instance = std::make_shared<Sam3Infer>(
-        vision_encoder_path, text_encoder_path, geom_path, decoder_path, gpu_id, confidence_threshold);
+        vision_encoder_path, text_encoder_path, geom_path, decoder_path, gpu_id);
 
     if (!instance->load_engines()) {
         std::cerr << "Failed to load Sam3Infer engines!" << std::endl;
@@ -40,11 +38,10 @@ std::shared_ptr<Sam3Infer> Sam3Infer::create_instance(
     const std::string &text_encoder_path,
     const std::string &geometry_encoder_path,
     const std::string &decoder_path,
-    int gpu_id,
-    float confidence_threshold)
+    int gpu_id)
 {
     auto instance = std::make_shared<Sam3Infer>(
-        vision_encoder_path, text_encoder_path, geometry_encoder_path, decoder_path, gpu_id, confidence_threshold);
+        vision_encoder_path, text_encoder_path, geometry_encoder_path, decoder_path, gpu_id);
 
     if (!instance->load_engines()) {
         std::cerr << "Failed to load Sam3Infer engines!" << std::endl;
@@ -58,15 +55,13 @@ Sam3Infer::Sam3Infer(
     const std::string &text_encoder_path,
     const std::string &geometry_encoder_path,
     const std::string &decoder_path,
-    int gpu_id,
-    float confidence_threshold)
+    int gpu_id)
     : InferBase(),
       vision_encoder_path_(vision_encoder_path),
       text_encoder_path_(text_encoder_path),
       geometry_encoder_path_(geometry_encoder_path),
       decoder_path_(decoder_path),
-      gpu_id_(gpu_id),
-      confidence_threshold_(confidence_threshold)
+      gpu_id_(gpu_id)
 {
 }
 
@@ -461,7 +456,7 @@ bool Sam3Infer::decode(int total_prompts, int prompt_len, void *stream)
                                  s);
 }
 
-void Sam3Infer::postprocess(InferResult &image_result, int global_prompt_idx, int image_idx, const std::string &label, bool return_mask, void *stream)
+void Sam3Infer::postprocess(InferResult &image_result, int global_prompt_idx, int image_idx, const std::string &label, float confidence_threshold, bool return_mask, void *stream)
 {
     cudaStream_t s = (cudaStream_t)stream;
     
@@ -488,7 +483,7 @@ void Sam3Infer::postprocess(InferResult &image_result, int global_prompt_idx, in
         d_filter_boxes, d_filter_indices, d_filter_scores, box_count_.gpu(),
         num_queries_, mask_height_, mask_width_,
         original_image_sizes_[image_idx].first, original_image_sizes_[image_idx].second,
-        confidence_threshold_, s);
+        confidence_threshold, s);
 
     // 同步获取数量
     cudaMemcpyAsync(box_count_.cpu(), box_count_.gpu(), sizeof(int), cudaMemcpyDeviceToHost, s);
@@ -709,6 +704,7 @@ InferResultArray Sam3Infer::forwards(const std::vector<Sam3Input> &inputs, bool 
     int global_idx = 0;
     for (int i = 0; i < num_images; ++i) 
     {
+        float confidence_threshold = inputs[i].confidence_threshold;
         int p_count = prompts_per_image[i];
         for (int p = 0; p < p_count; ++p) 
         {
@@ -719,7 +715,7 @@ InferResultArray Sam3Infer::forwards(const std::vector<Sam3Input> &inputs, bool 
                 lbl = inputs[i].prompts[p].text;
                 if(lbl.empty()) lbl = "object";
             }
-            postprocess(results[i], global_idx, i, lbl, return_mask, stream);
+            postprocess(results[i], global_idx, i, lbl, confidence_threshold, return_mask, stream);
             global_idx++;
         }
     }

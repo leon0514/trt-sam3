@@ -99,8 +99,7 @@ def init_system(gpu_id=0):
         text_path=TEXT_MODEL,
         geometry_path=GEOMETRY_MODEL, 
         decoder_path=DECODER_MODEL,
-        gpu_id=gpu_id,
-        confidence_threshold=0.4
+        gpu_id=gpu_id
     )
     
     if engine is None:
@@ -143,7 +142,7 @@ def demo_box_prompt(engine):
     box_prompt = ("pos", [747, 319, 768, 384]) 
     
     prompt_unit = trtsam3.Sam3PromptUnit("", [box_prompt])
-    input_obj = trtsam3.Sam3Input(image, [prompt_unit])
+    input_obj = trtsam3.Sam3Input(image, [prompt_unit], 0.5)
 
     # 推理
     results = engine.forwards([input_obj], True)[0] # 获取第一张图的结果
@@ -166,14 +165,13 @@ def demo_box_prompt(engine):
 # ==============================================================================
 def demo_multi_class_prompt(engine, tokenizer):
     print("\n=== Running Multi-Class Prompt Test ===")
-    image_path = "images/persons.jpg"
+    image_path = "images/smx.jpg"
     image = cv2.imread(image_path)
     if image is None:
         print(f"Skipping: {image_path} not found.")
         return
 
-    # 我们想要在这张图中同时识别 "person" 和 "glasses" (或者其他物体)
-    prompts_text = ["tie", "glasses", "head"]
+    prompts_text = ["helmet", "head"]
     
     # 1. 注册 Token (重要)
     register_prompts(engine, tokenizer, prompts_text)
@@ -185,7 +183,7 @@ def demo_multi_class_prompt(engine, tokenizer):
         prompt_units.append(trtsam3.Sam3PromptUnit(txt))
     
     # 3. 构造 Input 对象
-    input_obj = trtsam3.Sam3Input(image, prompt_units)
+    input_obj = trtsam3.Sam3Input(image, prompt_units, 0.7)
 
     # 4. 推理
     # engine.forwards 接受一个 inputs 列表，这里我们只传一张图
@@ -219,7 +217,7 @@ def demo_mixed_prompt(engine, tokenizer):
     box_constraint = ("pos", [747, 319, 768, 384])
     
     prompt_unit = trtsam3.Sam3PromptUnit(target_text, [box_constraint])
-    input_obj = trtsam3.Sam3Input(image, [prompt_unit])
+    input_obj = trtsam3.Sam3Input(image, [prompt_unit], 0.5)
     
     results = engine.forwards([input_obj], True)[0]
     
@@ -238,8 +236,8 @@ if __name__ == "__main__":
         
         # 运行不同的 Demo
         demo_multi_class_prompt(engine, tokenizer) # 核心新功能
-        demo_box_prompt(engine)                    # 纯几何提示
-        demo_mixed_prompt(engine, tokenizer)       # 混合提示
+        # demo_box_prompt(engine)                    # 纯几何提示
+        # demo_mixed_prompt(engine, tokenizer)       # 混合提示
         
         print("\nAll demos finished successfully.")
         

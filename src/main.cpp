@@ -59,8 +59,8 @@ int main()
     prompts1.emplace_back("hand");
 
     std::vector<Sam3Input> inputs;
-    inputs.emplace_back(img, prompts);
-    inputs.emplace_back(img1, prompts1);
+    inputs.emplace_back(img, prompts, 0.5);
+    inputs.emplace_back(img1, prompts1, 0.5);
 
     printf("Input constructed: 1 Image with %zu Prompts.\n", prompts.size());
 

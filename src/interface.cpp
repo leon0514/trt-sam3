@@ -48,7 +48,6 @@ PYBIND11_MODULE(trtsam3, m)
 {
     m.doc() = "Python bindings for Sam3Infer (One Vision, Many Prompts) using pybind11";
 
-    // --- 1. ObjectType 枚举 ---
     py::enum_<object::ObjectType>(m, "ObjectType")
         .value("UNKNOW", object::ObjectType::UNKNOW)
         .value("DETECTION", object::ObjectType::DETECTION)
@@ -57,7 +56,6 @@ PYBIND11_MODULE(trtsam3, m)
         .value("SEGMENTATION", object::ObjectType::SEGMENTATION)
         .export_values();
 
-    // --- 2. 基础结果结构体 ---
     py::class_<object::Box>(m, "Box")
         .def(py::init<float, float, float, float>(),
              py::arg("left") = 0, py::arg("top") = 0, py::arg("right") = 0, py::arg("bottom") = 0)
@@ -85,8 +83,6 @@ PYBIND11_MODULE(trtsam3, m)
         .def("__repr__", [](const object::DetectionBox &d)
              { return "<DetectionBox class='" + d.class_name + "' score=" + std::to_string(d.score) + ">"; });
 
-    // --- 3. 新增 Sam3PromptUnit 绑定 ---
-    // 这是支持单图多 Prompt 的核心单元
     py::class_<Sam3PromptUnit>(m, "Sam3PromptUnit")
         .def(py::init<>())
         .def(py::init<const std::string &, const std::vector<BoxPrompt> &>(),
@@ -97,20 +93,12 @@ PYBIND11_MODULE(trtsam3, m)
             return "<Sam3PromptUnit text='" + u.text + "' boxes_count=" + std::to_string(u.boxes.size()) + ">";
         });
 
-    // --- 4. 修改 Sam3Input 绑定 ---
     py::class_<Sam3Input>(m, "Sam3Input")
         .def(py::init<>())
         
-        // 构造函数 1: 完整模式 (Image, List[PromptUnit])
-        .def(py::init([](py::array_t<uint8_t> img, const std::vector<Sam3PromptUnit> &prompts)
-                      { return Sam3Input(numpy_to_mat(img), prompts); }),
-             py::arg("image"), py::arg("prompts"))
-
-        // 构造函数 2: 兼容模式 (Image, Single Text, Single Box List)
-        // 方便只做一个 prompt 的时候调用，底层会自动转成 vector<Sam3PromptUnit>
-        .def(py::init([](py::array_t<uint8_t> img, const std::string &txt, const std::vector<BoxPrompt> &boxes)
-                      { return Sam3Input(numpy_to_mat(img), txt, boxes); }),
-             py::arg("image"), py::arg("text_prompt") = "", py::arg("box_prompts") = std::vector<BoxPrompt>())
+        .def(py::init([](py::array_t<uint8_t> img, const std::vector<Sam3PromptUnit> &prompts, float conf)
+                      { return Sam3Input(numpy_to_mat(img), prompts, conf); }),
+             py::arg("image"), py::arg("prompts"), py::arg("conf"))
 
         // 属性读写
         .def_readwrite("prompts", &Sam3Input::prompts) // 暴露 prompts 列表给 Python
@@ -120,13 +108,11 @@ PYBIND11_MODULE(trtsam3, m)
                       { return mat_to_numpy(self.image); }, [](Sam3Input &self, py::array_t<uint8_t> array)
                       { self.image = numpy_to_mat(array).clone(); });
 
-    // --- 5. Sam3Infer 绑定 ---
     py::class_<Sam3Infer, std::shared_ptr<Sam3Infer>>(m, "Sam3Infer")
         // 静态工厂方法
         .def_static("create_instance",
-                    static_cast<std::shared_ptr<Sam3Infer> (*)(const std::string &, const std::string &, const std::string &, const std::string &, int, float)>(&Sam3Infer::create_instance),
-                    py::arg("vision_path"), py::arg("text_path"), py::arg("geometry_path"), py::arg("decoder_path"),
-                    py::arg("gpu_id") = 0, py::arg("confidence_threshold") = 0.5f,
+                    static_cast<std::shared_ptr<Sam3Infer> (*)(const std::string &, const std::string &, const std::string &, const std::string &, int)>(&Sam3Infer::create_instance),
+                    py::arg("vision_path"), py::arg("text_path"), py::arg("geometry_path"), py::arg("decoder_path"), py::arg("gpu_id") = 0, 
                     "Create a Sam3Infer instance with all 3 encoders.")
 
         // 成员函数

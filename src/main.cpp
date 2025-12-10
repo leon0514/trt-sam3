@@ -45,14 +45,14 @@ int main()
     }
     setup_data(engine);
 
-    cv::Mat img = cv::imread("images/persons.jpg"); 
+    cv::Mat img = cv::imread("images/smx.jpg"); 
 
     std::vector<Sam3PromptUnit> prompts;
     prompts.emplace_back("person"); 
     prompts.emplace_back("hand");
 
 
-    cv::Mat img1 = cv::imread("images/persons.jpg");
+    cv::Mat img1 = cv::imread("images/smx.jpg");
 
     std::vector<Sam3PromptUnit> prompts1;
     prompts1.emplace_back("person");

@@ -171,7 +171,7 @@ def demo_multi_class_prompt(engine, tokenizer):
         print(f"Skipping: {image_path} not found.")
         return
 
-    prompts_text = ["helmet", "head"]
+    prompts_text = ["helmet", "head", "hand", "clothes", "body", "tie", "glasses", "hair", "road"]
     
     # 1. 注册 Token (重要)
     register_prompts(engine, tokenizer, prompts_text)
@@ -187,7 +187,8 @@ def demo_multi_class_prompt(engine, tokenizer):
 
     # 4. 推理
     # engine.forwards 接受一个 inputs 列表，这里我们只传一张图
-    batch_results = engine.forwards([input_obj], True)
+    for _ in range(100):
+        batch_results = engine.forwards([input_obj], True)
     
     # 5. 获取结果
     # batch_results[0] 包含了该张图片下所有 Prompt 检测到的物体

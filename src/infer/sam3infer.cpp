@@ -4,8 +4,9 @@
 #include "kernels/process_kernel_warp.hpp"
 #include "kernels/postprocess.cuh"
 #include "common/createObject.hpp"
+#include <algorithm>
 
-// 全局 load 函数保持不变
+// 全局 load 函数
 std::shared_ptr<InferBase> load(
     const std::string &vision_encoder_path,
     const std::string &text_encoder_path,
@@ -15,7 +16,7 @@ std::shared_ptr<InferBase> load(
     return Sam3Infer::create_instance(vision_encoder_path, text_encoder_path, decoder_path, gpu_id);
 }
 
-// 静态工厂函数保持不变
+// 静态工厂函数
 std::shared_ptr<Sam3Infer> Sam3Infer::create_instance(
     const std::string &vision_encoder_path,
     const std::string &text_encoder_path,
@@ -63,6 +64,13 @@ Sam3Infer::Sam3Infer(
       decoder_path_(decoder_path),
       gpu_id_(gpu_id)
 {
+    // 初始化预留 Image Buffer
+    original_images_buf_.resize(max_image_batch_);
+    for(auto& buf : original_images_buf_) {
+        buf = std::make_shared<tensor::Memory<uint8_t>>();
+    }
+    // 预留 size 记录
+    original_image_sizes_.resize(max_image_batch_);
 }
 
 bool Sam3Infer::load_engines()
@@ -101,6 +109,9 @@ bool Sam3Infer::load_engines()
     mask_width_ = pred_masks_shape[2];
     mask_height_ = pred_masks_shape[3];
 
+    // 初始化固定显存
+    allocate_memory_once();
+
     return true;
 }
 
@@ -109,47 +120,35 @@ void Sam3Infer::setup_text_inputs(const std::string &input_text, const std::arra
     text_input_map_[input_text] = std::make_pair(input_ids, attention_mask);
 }
 
-void Sam3Infer::adjust_memory(int image_batch_size, int total_prompts, int max_boxes)
+void Sam3Infer::allocate_memory_once()
 {
-    // 1. Image Batch 相关 (大小 N)
-    if (original_images_buf_.size() < image_batch_size) {
-        for (int i = original_images_buf_.size(); i < image_batch_size; ++i)
-            original_images_buf_.emplace_back(std::make_shared<tensor::Memory<uint8_t>>());
-    }
+    // 1. Image Batch 相关 (按 max_image_batch_ 分配)
+    affine_matrix_.cpu(max_image_batch_ * 6);
+    affine_matrix_.gpu(max_image_batch_ * 6);
     
-    // Resize 矩阵只需要 batch N
-    affine_matrix_.cpu(image_batch_size * 6);
-    affine_matrix_.gpu(image_batch_size * 6);
-    
-    // Mask Affine Matrix 需要 batch M (因为每个 Prompt 产生结果后都要做后处理)
-    // 或者我们可以在后处理循环中复用 batch N 的矩阵？ 
-    // 实际上后处理是按 Query 来的，为了简便，我们为每个 Postprocess 分配足够空间
-    // 这里 postprocess 是串行或并行的，但 mask_buffer 需要足够大
-    // 修正：Mask恢复只需要对应原图的矩阵，所以 N 份矩阵就够了，但在 postprocess 内核中需要索引。
-    // 简单起见，分配 N 份。
-    mask_affine_matrix_.cpu(image_batch_size * 6);
-    mask_affine_matrix_.gpu(image_batch_size * 6);
+    mask_affine_matrix_.cpu(max_image_batch_ * 6);
+    mask_affine_matrix_.gpu(max_image_batch_ * 6);
 
-    preprocessed_images_.gpu(image_batch_size * 3 * input_image_height_ * input_image_width_);
+    preprocessed_images_.gpu(max_image_batch_ * 3 * input_image_height_ * input_image_width_);
 
-    // Vision Encoder Outputs (Batch N)
+    // Vision Encoder Outputs
     size_t feat_0_sz_one = fpn_feat_0_shape_[1] * fpn_feat_0_shape_[2] * fpn_feat_0_shape_[3];
-    size_t feat_0_sz_n = image_batch_size * feat_0_sz_one;
+    size_t feat_0_sz_max_img = max_image_batch_ * feat_0_sz_one;
     
-    fpn_feat_0_.gpu(feat_0_sz_n);
-    fpn_feat_1_.gpu(feat_0_sz_n / 4);
-    fpn_feat_2_.gpu(feat_0_sz_n / 16);
-    fpn_pos_2_.gpu(feat_0_sz_n / 16);
+    fpn_feat_0_.gpu(feat_0_sz_max_img);
+    fpn_feat_1_.gpu(feat_0_sz_max_img / 4);
+    fpn_feat_2_.gpu(feat_0_sz_max_img / 16);
+    fpn_pos_2_.gpu(feat_0_sz_max_img / 16);
 
-    // 2. Prompt/Decoder Batch 相关 (大小 M = Total Prompts)
-    size_t feat_0_sz_m = total_prompts * feat_0_sz_one;
-    fpn_feat_0_expanded_.gpu(feat_0_sz_m);
-    fpn_feat_1_expanded_.gpu(feat_0_sz_m / 4);
-    fpn_feat_2_expanded_.gpu(feat_0_sz_m / 16);
-    fpn_pos_2_expanded_.gpu(feat_0_sz_m / 16);
+    // 2. Decoder Batch 相关 (按 max_prompt_batch_ 分配)
+    size_t feat_0_sz_max_pmt = max_prompt_batch_ * feat_0_sz_one;
+    fpn_feat_0_gather_.gpu(feat_0_sz_max_pmt);
+    fpn_feat_1_gather_.gpu(feat_0_sz_max_pmt / 4);
+    fpn_feat_2_gather_.gpu(feat_0_sz_max_pmt / 16);
+    fpn_pos_2_gather_.gpu(feat_0_sz_max_pmt / 16);
 
     // Text Input
-    size_t text_in_sz = total_prompts * text_ids_shape_[1];
+    size_t text_in_sz = max_prompt_batch_ * text_ids_shape_[1];
     text_input_ids_.cpu(text_in_sz);
     text_input_ids_.gpu(text_in_sz);
     text_attention_mask_.cpu(text_in_sz);
@@ -159,36 +158,34 @@ void Sam3Infer::adjust_memory(int image_batch_size, int total_prompts, int max_b
     text_features_.gpu(text_in_sz * 256);
     text_mask_.gpu(text_in_sz);
 
-    // Geometry
-    bool use_geom = (max_boxes > 0 && geometry_encoder_trt_);
+    // Geometry (按 max_prompt_batch_ * max_boxes 分配)
+    bool use_geom = (!geometry_encoder_path_.empty());
     if (use_geom) {
-        size_t box_sz = total_prompts * max_boxes * 4;
+        size_t box_sz = max_prompt_batch_ * max_boxes_per_prompt_ * 4;
         geom_boxes_.cpu(box_sz);
         geom_boxes_.gpu(box_sz);
-        geom_labels_.cpu(total_prompts * max_boxes);
-        geom_labels_.gpu(total_prompts * max_boxes);
-        size_t geom_feat_sz = total_prompts * (max_boxes + 1) * 256;
+        geom_labels_.cpu(max_prompt_batch_ * max_boxes_per_prompt_);
+        geom_labels_.gpu(max_prompt_batch_ * max_boxes_per_prompt_);
+        
+        size_t geom_feat_sz = max_prompt_batch_ * (max_boxes_per_prompt_ + 1) * 256;
         geom_features_.gpu(geom_feat_sz);
-        geom_mask_.gpu(total_prompts * (max_boxes + 1));
+        geom_mask_.gpu(max_prompt_batch_ * (max_boxes_per_prompt_ + 1));
     }
 
     // Decoder Input (Prompt feats)
-    size_t total_prompt_len = text_ids_shape_[1] + (use_geom ? (max_boxes + 1) : 0);
-    prompt_features_.gpu(total_prompts * total_prompt_len * 256);
-    prompt_mask_.gpu(total_prompts * total_prompt_len);
+    // 假设 geometry 不会超过预设
+    size_t total_prompt_len = text_ids_shape_[1] + (use_geom ? (max_boxes_per_prompt_ + 1) : 0);
+    prompt_features_.gpu(max_prompt_batch_ * total_prompt_len * 256);
+    prompt_mask_.gpu(max_prompt_batch_ * total_prompt_len);
 
     // Decoder Output
-    pred_masks_.gpu(total_prompts * num_queries_ * mask_height_ * mask_width_);
-    pred_boxes_.gpu(total_prompts * num_queries_ * 4);
-    pred_logits_.gpu(total_prompts * num_queries_);
-    presence_logits_.gpu(total_prompts * 1);
+    pred_masks_.gpu(max_prompt_batch_ * num_queries_ * mask_height_ * mask_width_);
+    pred_boxes_.gpu(max_prompt_batch_ * num_queries_ * 4);
+    pred_logits_.gpu(max_prompt_batch_ * num_queries_);
+    presence_logits_.gpu(max_prompt_batch_ * 1);
 
-    // Postprocess - 为最大可能的单个批次操作保留空间
-    // 我们假设 postprocess 是一次处理一个 prompt 的结果，或者并行处理所有
-    // 这里的 buffer 主要用于 cuda kernel 内部的临时存储，通常不需要 total_prompts 那么大，
-    // 但为了确保并行安全性，我们按 total_prompts * num_queries 分配，或者循环复用。
-    // 为了极致速度，直接并行处理所有 Prompt 的结果。
-    size_t post_sz = total_prompts * num_queries_;
+    // Postprocess Buffers
+    size_t post_sz = max_prompt_batch_ * num_queries_;
     filter_boxes_.cpu(post_sz * 4);
     filter_boxes_.gpu(post_sz * 4);
     filter_scores_.cpu(post_sz);
@@ -197,6 +194,21 @@ void Sam3Infer::adjust_memory(int image_batch_size, int total_prompts, int max_b
     filter_indices_.gpu(post_sz);
     box_count_.cpu(1);
     box_count_.gpu(1);
+
+    // Mask Postprocess (假设每个 prompt 最多出一个有效的 mask 来估计 buffer)
+    // 或者直接分配足够大的显存。这里为了安全，按 max_prompt_batch_ * num_queries_ 分配
+    // 实际上通常只会有几个 valid box。
+    // 分配一个安全值，比如 256MB，或动态检查。这里按最大可能分配。
+    // 假设每个 prompt 出 1 个 mask，最大 max_prompt_batch_ 个。
+    // 如果出很多 mask，循环处理。
+    // 这里的 box_affine_matrices_ 是给 Postprocess kernel 用的
+    box_affine_matrices_.cpu(post_sz * 6);
+    box_affine_matrices_.gpu(post_sz * 6);
+    
+    // // Mask Buffer: 预分配一个较大的池子，例如 512MB
+    // size_t mask_pool_size = 256 * 1024 * 1024; 
+    // mask_buffer_.gpu(mask_pool_size);
+    // mask_buffer_.cpu(mask_pool_size);
 }
 
 void Sam3Infer::set_binding_dim(std::shared_ptr<TensorRT::Engine> &engine, int idx, const std::vector<int> &dims)
@@ -210,15 +222,16 @@ void Sam3Infer::preprocess(const Sam3Input &input, int ibatch, void *stream)
     cudaStream_t s = (cudaStream_t)stream;
     const cv::Mat &img = input.image;
     tensor::Image img_tensor = tensor::cvimg(img);
-    // 这里注意：original_image_sizes_ 必须在 loop 外 clear
-    original_image_sizes_.emplace_back(img_tensor.width, img_tensor.height);
+    
+    // 记录原始尺寸
+    original_image_sizes_[ibatch] = {img_tensor.width, img_tensor.height};
 
     affine::ResizeMatrix matrix;
     matrix.compute(std::make_tuple(img_tensor.width, img_tensor.height),
                    std::make_tuple(input_image_width_, input_image_height_));
 
     size_t size_image = img_tensor.width * img_tensor.height * 3;
-    uint8_t *h_buf = original_images_buf_[ibatch]->cpu(size_image); // Re-use buffer if capacity enough
+    uint8_t *h_buf = original_images_buf_[ibatch]->cpu(size_image); 
 
     if (img.isContinuous()) {
         memcpy(h_buf, img.data, size_image);
@@ -234,12 +247,11 @@ void Sam3Infer::preprocess(const Sam3Input &input, int ibatch, void *stream)
     cudaMemcpyAsync(original_images_buf_[ibatch]->gpu(size_image), h_buf, size_image, cudaMemcpyHostToDevice, s);
     cudaMemcpyAsync(affine_matrix_.gpu() + ibatch * 6, h_mat, sizeof(matrix.d2i), cudaMemcpyHostToDevice, s);
     
-    // Mask Affine Matrix 的 CPU 部分也顺便在这里计算，方便后面用
+    // Mask Affine Matrix
     affine::ResizeMatrix mask_m;
     mask_m.compute(std::make_tuple(mask_width_, mask_height_),
                    std::make_tuple(img_tensor.width, img_tensor.height));
     memcpy(mask_affine_matrix_.cpu() + ibatch * 6, mask_m.d2i, sizeof(mask_m.d2i));
-    // GPU拷贝在循环外统一做或者这里做都可以，为了效率统一做
     cudaMemcpyAsync(mask_affine_matrix_.gpu() + ibatch * 6, mask_m.d2i, sizeof(mask_m.d2i), cudaMemcpyHostToDevice, s);
 
     warp_affine_bilinear_and_normalize_plane(
@@ -249,8 +261,11 @@ void Sam3Infer::preprocess(const Sam3Input &input, int ibatch, void *stream)
         affine_matrix_.gpu() + ibatch * 6, 114, preprocess_norm_, s);
 }
 
-bool Sam3Infer::encode_image(void *stream)
+bool Sam3Infer::encode_image(int batch_size, void *stream)
 {
+    // 输入维度设置
+    set_binding_dim(vision_encoder_trt_, 0, {batch_size, 3, input_image_height_, input_image_width_});
+
     return vision_encoder_trt_->forward({{"images", preprocessed_images_.gpu()},
                                          {"fpn_feat_0", fpn_feat_0_.gpu()},
                                          {"fpn_feat_1", fpn_feat_1_.gpu()},
@@ -259,48 +274,42 @@ bool Sam3Infer::encode_image(void *stream)
                                         (cudaStream_t)stream);
 }
 
-// 核心加速：特征扩展
-void Sam3Infer::expand_vision_features(const std::vector<int>& prompts_per_image, void* stream)
+// 核心优化：Gather 模式
+void Sam3Infer::gather_vision_features(const std::vector<PromptMeta>& batch_prompts, int batch_size, void* stream)
 {
     cudaStream_t s = (cudaStream_t)stream;
-    int num_images = prompts_per_image.size();
     
-    // 计算特征图大小 (in float elements)
     size_t sz_0 = fpn_feat_0_shape_[1] * fpn_feat_0_shape_[2] * fpn_feat_0_shape_[3];
     size_t sz_1 = sz_0 / 4;
     size_t sz_2 = sz_0 / 16;
     
-    int current_prompt_idx = 0;
-    
-    // 遍历每一张图
-    for(int i = 0; i < num_images; ++i) {
-        int count = prompts_per_image[i];
-        if (count == 0) continue;
+    // 遍历当前 Batch 的每一个 Prompt
+    for(int i = 0; i < batch_size; ++i) {
+        int img_idx = batch_prompts[i].image_idx;
 
-        // 源地址 (Image i 的特征)
-        float* src_0 = fpn_feat_0_.gpu() + i * sz_0;
-        float* src_1 = fpn_feat_1_.gpu() + i * sz_1;
-        float* src_2 = fpn_feat_2_.gpu() + i * sz_2;
-        float* src_p = fpn_pos_2_.gpu() + i * sz_2;
+        // 源地址：Image 队列中的偏移
+        float* src_0 = fpn_feat_0_.gpu() + img_idx * sz_0;
+        float* src_1 = fpn_feat_1_.gpu() + img_idx * sz_1;
+        float* src_2 = fpn_feat_2_.gpu() + img_idx * sz_2;
+        float* src_p = fpn_pos_2_.gpu() + img_idx * sz_2;
 
-        // 目标地址 (Prompt j, j+1... 的特征)
-        // 我们可以一次拷贝 count 个块吗？不行，因为内存是不连续的吗？
-        // Decoder Input 是 [Total_Prompts, C, H, W]。是连续的。
-        // 所以，我们需要把 src 复制 count 次，填充到 dst 中。
-        
-        for (int k = 0; k < count; ++k) {
-            int dst_idx = current_prompt_idx + k;
-            
-            cudaMemcpyAsync(fpn_feat_0_expanded_.gpu() + dst_idx * sz_0, src_0, sz_0 * sizeof(float), cudaMemcpyDeviceToDevice, s);
-            cudaMemcpyAsync(fpn_feat_1_expanded_.gpu() + dst_idx * sz_1, src_1, sz_1 * sizeof(float), cudaMemcpyDeviceToDevice, s);
-            cudaMemcpyAsync(fpn_feat_2_expanded_.gpu() + dst_idx * sz_2, src_2, sz_2 * sizeof(float), cudaMemcpyDeviceToDevice, s);
-            cudaMemcpyAsync(fpn_pos_2_expanded_.gpu() + dst_idx * sz_2, src_p, sz_2 * sizeof(float), cudaMemcpyDeviceToDevice, s);
-        }
-        current_prompt_idx += count;
+        // 目标地址：Prompt 队列中的偏移 (i)
+        float* dst_0 = fpn_feat_0_gather_.gpu() + i * sz_0;
+        float* dst_1 = fpn_feat_1_gather_.gpu() + i * sz_1;
+        float* dst_2 = fpn_feat_2_gather_.gpu() + i * sz_2;
+        float* dst_p = fpn_pos_2_gather_.gpu() + i * sz_2;
+
+        // 异步拷贝
+        // 这里的拷贝次数等于 batch_size，通常 < 100，开销可控。
+        // 极致优化可以写个 Kernel，但在 C++ 逻辑中维护更简单
+        cudaMemcpyAsync(dst_0, src_0, sz_0 * sizeof(float), cudaMemcpyDeviceToDevice, s);
+        cudaMemcpyAsync(dst_1, src_1, sz_1 * sizeof(float), cudaMemcpyDeviceToDevice, s);
+        cudaMemcpyAsync(dst_2, src_2, sz_2 * sizeof(float), cudaMemcpyDeviceToDevice, s);
+        cudaMemcpyAsync(dst_p, src_p, sz_2 * sizeof(float), cudaMemcpyDeviceToDevice, s);
     }
 }
 
-bool Sam3Infer::encode_text(const std::vector<Sam3Input> &inputs, int total_prompts, void *stream)
+bool Sam3Infer::encode_text(const std::vector<PromptMeta> &batch_prompts, int batch_size, void *stream)
 {
     int seq_len = 32;
     int64_t *h_ids = text_input_ids_.cpu();
@@ -309,33 +318,29 @@ bool Sam3Infer::encode_text(const std::vector<Sam3Input> &inputs, int total_prom
     std::array<int64_t, 32> def_ids; def_ids.fill(49407);
     std::array<int64_t, 32> def_mask = {0}; def_mask[0] = 1;
 
-    int global_idx = 0;
-    for (const auto& inp : inputs) 
+    for (int i = 0; i < batch_size; ++i)
     {
-        for (const auto& prompt : inp.prompts) 
+        const Sam3PromptUnit* prompt = batch_prompts[i].ptr;
+        const int64_t *src_ids = def_ids.data();
+        const int64_t *src_mask = def_mask.data();
+
+        if (prompt && text_input_map_.count(prompt->text)) 
         {
-            const int64_t *src_ids = def_ids.data();
-            const int64_t *src_mask = def_mask.data();
-
-            if (text_input_map_.count(prompt.text)) 
-            {
-                src_ids = text_input_map_[prompt.text].first.data();
-                src_mask = text_input_map_[prompt.text].second.data();
-            } 
-            else if (!prompt.text.empty()) 
-            {
-                printf("[Warning] Text prompt '%s' not cached. Using default.\n", prompt.text.c_str());
-            }
-
-            memcpy(h_ids + global_idx * seq_len, src_ids, seq_len * sizeof(int64_t));
-            memcpy(h_mask + global_idx * seq_len, src_mask, seq_len * sizeof(int64_t));
-            global_idx++;
-        }
+            src_ids = text_input_map_[prompt->text].first.data();
+            src_mask = text_input_map_[prompt->text].second.data();
+        } 
+        
+        memcpy(h_ids + i * seq_len, src_ids, seq_len * sizeof(int64_t));
+        memcpy(h_mask + i * seq_len, src_mask, seq_len * sizeof(int64_t));
     }
 
     cudaStream_t s = (cudaStream_t)stream;
-    cudaMemcpyAsync(text_input_ids_.gpu(), h_ids, total_prompts * seq_len * sizeof(int64_t), cudaMemcpyHostToDevice, s);
-    cudaMemcpyAsync(text_attention_mask_.gpu(), h_mask, total_prompts * seq_len * sizeof(int64_t), cudaMemcpyHostToDevice, s);
+    cudaMemcpyAsync(text_input_ids_.gpu(), h_ids, batch_size * seq_len * sizeof(int64_t), cudaMemcpyHostToDevice, s);
+    cudaMemcpyAsync(text_attention_mask_.gpu(), h_mask, batch_size * seq_len * sizeof(int64_t), cudaMemcpyHostToDevice, s);
+
+    // 设置维度
+    set_binding_dim(text_encoder_trt_, 0, {batch_size, seq_len});
+    set_binding_dim(text_encoder_trt_, 1, {batch_size, seq_len});
 
     return text_encoder_trt_->forward({{"input_ids", text_input_ids_.gpu()},
                                        {"attention_mask", text_attention_mask_.gpu()},
@@ -344,29 +349,28 @@ bool Sam3Infer::encode_text(const std::vector<Sam3Input> &inputs, int total_prom
                                       s);
 }
 
-bool Sam3Infer::encode_boxes(const std::vector<Sam3Input> &inputs, int total_prompts, int max_boxes, void *stream)
+bool Sam3Infer::encode_boxes(const std::vector<PromptMeta> &batch_prompts, int batch_size, int max_boxes, void *stream)
 {
     if (!geometry_encoder_trt_ || max_boxes == 0) return true;
 
     float *h_boxes = geom_boxes_.cpu();
     int64_t *h_labels = geom_labels_.cpu();
 
-    memset(h_boxes, 0, total_prompts * max_boxes * 4 * sizeof(float));
-    memset(h_labels, 0, total_prompts * max_boxes * sizeof(int64_t));
+    // 清零当前 batch 区域
+    memset(h_boxes, 0, batch_size * max_boxes * 4 * sizeof(float));
+    memset(h_labels, 0, batch_size * max_boxes * sizeof(int64_t));
 
-    int global_idx = 0;
-    int img_idx = 0;
-    
-    for (const auto& inp : inputs) 
+    for (int i = 0; i < batch_size; ++i)
     {
+        int img_idx = batch_prompts[i].image_idx;
+        const Sam3PromptUnit* prompt = batch_prompts[i].ptr;
+        
         float iw = (float)original_image_sizes_[img_idx].first;
         float ih = (float)original_image_sizes_[img_idx].second;
-        
-        for (const auto& prompt : inp.prompts) 
-        {
-            const auto& boxes = prompt.boxes;
-            
-            for (size_t k = 0; k < boxes.size(); ++k) 
+
+        if (prompt) {
+            const auto& boxes = prompt->boxes;
+            for (size_t k = 0; k < boxes.size() && k < (size_t)max_boxes; ++k) 
             {
                 const auto &box = boxes[k];
                 int64_t label = (box.first == "pos") ? 1 : 0;
@@ -374,42 +378,42 @@ bool Sam3Infer::encode_boxes(const std::vector<Sam3Input> &inputs, int total_pro
                 float x1 = box.second[0], y1 = box.second[1];
                 float x2 = box.second[2], y2 = box.second[3];
 
+                // Normalize
                 float cx = (x1 + x2) * 0.5f / iw;
                 float cy = (y1 + y2) * 0.5f / ih;
                 float w = (x2 - x1) / iw;
                 float h = (y2 - y1) / ih;
 
-                int idx_base = global_idx * max_boxes + k;
+                int idx_base = i * max_boxes + k;
                 h_labels[idx_base] = label;
                 h_boxes[idx_base * 4 + 0] = cx;
                 h_boxes[idx_base * 4 + 1] = cy;
                 h_boxes[idx_base * 4 + 2] = w;
                 h_boxes[idx_base * 4 + 3] = h;
             }
-            global_idx++;
         }
-        img_idx++;
     }
 
     cudaStream_t s = (cudaStream_t)stream;
-    cudaMemcpyAsync(geom_boxes_.gpu(), h_boxes, total_prompts * max_boxes * 4 * sizeof(float), cudaMemcpyHostToDevice, s);
-    cudaMemcpyAsync(geom_labels_.gpu(), h_labels, total_prompts * max_boxes * sizeof(int64_t), cudaMemcpyHostToDevice, s);
+    cudaMemcpyAsync(geom_boxes_.gpu(), h_boxes, batch_size * max_boxes * 4 * sizeof(float), cudaMemcpyHostToDevice, s);
+    cudaMemcpyAsync(geom_labels_.gpu(), h_labels, batch_size * max_boxes * sizeof(int64_t), cudaMemcpyHostToDevice, s);
 
-    // Geometry Encoder 输入需要的是 expand 后的特征吗？
-    // 通常 geometry encoder 会用到 fpn_feat_2 等作为 context，
-    // 如果模型结构如此，这里必须使用 fpn_feat_2_expanded_ (大小 M) 而不是原始的 (大小 N)。
-    // 假设 geometry encoder 也是对每个 prompt 运行一次。
-    
+    set_binding_dim(geometry_encoder_trt_, 0, {batch_size, max_boxes, 4});
+    set_binding_dim(geometry_encoder_trt_, 1, {batch_size, max_boxes});
+    set_binding_dim(geometry_encoder_trt_, 2, {batch_size, 256, 72, 72}); 
+    set_binding_dim(geometry_encoder_trt_, 3, {batch_size, 256, 72, 72});
+
+    // 注意：这里使用 Gather 后的 Vision Feature
     return geometry_encoder_trt_->forward({{"input_boxes", geom_boxes_.gpu()},
                                            {"input_boxes_labels", geom_labels_.gpu()},
-                                           {"fpn_feat_2", fpn_feat_2_expanded_.gpu()}, // 使用 Expanded
-                                           {"fpn_pos_2", fpn_pos_2_expanded_.gpu()},   // 使用 Expanded
+                                           {"fpn_feat_2", fpn_feat_2_gather_.gpu()}, 
+                                           {"fpn_pos_2", fpn_pos_2_gather_.gpu()},
                                            {"geometry_features", geom_features_.gpu()},
                                            {"geometry_mask", geom_mask_.gpu()}},
                                           s);
 }
 
-bool Sam3Infer::decode(int total_prompts, int prompt_len, void *stream)
+bool Sam3Infer::decode(int batch_size, int prompt_len, void *stream)
 {
     int text_len = text_ids_shape_[1];
     int feat_dim = 256;
@@ -425,8 +429,8 @@ bool Sam3Infer::decode(int total_prompts, int prompt_len, void *stream)
 
     cudaStream_t s = (cudaStream_t)stream;
 
-    // 这里的 batch 是 total_prompts
-    for (int i = 0; i < total_prompts; ++i)
+    // 拼接 Prompt Features
+    for (int i = 0; i < batch_size; ++i)
     {
         size_t prompt_off = i * prompt_len * feat_sz;
         size_t prompt_m_off = i * prompt_len * mask_sz;
@@ -442,11 +446,18 @@ bool Sam3Infer::decode(int total_prompts, int prompt_len, void *stream)
         }
     }
 
-    // 注意：Decoder 输入使用 Expanded Vision Features
-    return decoder_trt_->forward({{"fpn_feat_0", fpn_feat_0_expanded_.gpu()},
-                                  {"fpn_feat_1", fpn_feat_1_expanded_.gpu()},
-                                  {"fpn_feat_2", fpn_feat_2_expanded_.gpu()},
-                                  {"fpn_pos_2", fpn_pos_2_expanded_.gpu()},
+    set_binding_dim(decoder_trt_, 0, {batch_size, fpn_feat_0_shape_[1], fpn_feat_0_shape_[2], fpn_feat_0_shape_[3]});
+    set_binding_dim(decoder_trt_, 1, {batch_size, fpn_feat_0_shape_[1], fpn_feat_0_shape_[2] / 2, fpn_feat_0_shape_[3] / 2});
+    set_binding_dim(decoder_trt_, 2, {batch_size, fpn_feat_0_shape_[1], fpn_feat_0_shape_[2] / 4, fpn_feat_0_shape_[3] / 4});
+    set_binding_dim(decoder_trt_, 3, {batch_size, fpn_feat_0_shape_[1], fpn_feat_0_shape_[2] / 4, fpn_feat_0_shape_[3] / 4});
+    set_binding_dim(decoder_trt_, 4, {batch_size, prompt_len, 256});
+    set_binding_dim(decoder_trt_, 5, {batch_size, prompt_len});
+
+    // 使用 Gather 后的特征
+    return decoder_trt_->forward({{"fpn_feat_0", fpn_feat_0_gather_.gpu()},
+                                  {"fpn_feat_1", fpn_feat_1_gather_.gpu()},
+                                  {"fpn_feat_2", fpn_feat_2_gather_.gpu()},
+                                  {"fpn_pos_2", fpn_pos_2_gather_.gpu()},
                                   {"prompt_features", prompt_features_.gpu()},
                                   {"prompt_mask", prompt_mask_.gpu()},
                                   {"pred_masks", pred_masks_.gpu()},
@@ -456,28 +467,23 @@ bool Sam3Infer::decode(int total_prompts, int prompt_len, void *stream)
                                  s);
 }
 
-void Sam3Infer::postprocess(InferResult &image_result, int global_prompt_idx, int image_idx, const std::string &label, float confidence_threshold, bool return_mask, void *stream)
+void Sam3Infer::postprocess(InferResult &image_result, int batch_idx, int image_idx, const std::string &label, float confidence_threshold, bool return_mask, void *stream)
 {
     cudaStream_t s = (cudaStream_t)stream;
     
-    // 复用 filter_boxes_ 内存，通过 offset 定位到当前 prompt 的工作区
-    // 注意：sam3_postprocess_plane 内部是针对单张图的一组 query 进行过滤。
-    // 这里我们传入的是 global_prompt_idx 对应的结果。
-    
-    // 指针偏移
-    float* d_pred_masks = pred_masks_.gpu() + global_prompt_idx * num_queries_ * mask_height_ * mask_width_;
-    float* d_pred_boxes = pred_boxes_.gpu() + global_prompt_idx * num_queries_ * 4;
-    float* d_pred_logits = pred_logits_.gpu() + global_prompt_idx * num_queries_;
-    float* d_presence = presence_logits_.gpu() + global_prompt_idx;
+    // 指针偏移 (基于当前 Batch 内的 index: batch_idx)
+    float* d_pred_masks = pred_masks_.gpu() + batch_idx * num_queries_ * mask_height_ * mask_width_;
+    float* d_pred_boxes = pred_boxes_.gpu() + batch_idx * num_queries_ * 4;
+    float* d_pred_logits = pred_logits_.gpu() + batch_idx * num_queries_;
+    float* d_presence = presence_logits_.gpu() + batch_idx;
 
-    // 为了防止并行冲突，我们之前分配了 total_prompts * size 的 filter buffer
-    float* d_filter_boxes = filter_boxes_.gpu() + global_prompt_idx * num_queries_ * 4;
-    float* d_filter_scores = filter_scores_.gpu() + global_prompt_idx * num_queries_;
-    int* d_filter_indices = filter_indices_.gpu() + global_prompt_idx * num_queries_;
+    float* d_filter_boxes = filter_boxes_.gpu() + batch_idx * num_queries_ * 4;
+    float* d_filter_scores = filter_scores_.gpu() + batch_idx * num_queries_;
+    int* d_filter_indices = filter_indices_.gpu() + batch_idx * num_queries_;
     
-    // Box Count 还是用同一个，每次 Memset 0 即可，因为我们要同步拿结果
     cudaMemsetAsync(box_count_.gpu(), 0, sizeof(int), s);
 
+    // 筛选
     sam3_postprocess_plane(
         d_pred_masks, d_pred_boxes, d_pred_logits, d_presence,
         d_filter_boxes, d_filter_indices, d_filter_scores, box_count_.gpu(),
@@ -485,14 +491,12 @@ void Sam3Infer::postprocess(InferResult &image_result, int global_prompt_idx, in
         original_image_sizes_[image_idx].first, original_image_sizes_[image_idx].second,
         confidence_threshold, s);
 
-    // 同步获取数量
     cudaMemcpyAsync(box_count_.cpu(), box_count_.gpu(), sizeof(int), cudaMemcpyDeviceToHost, s);
-    cudaStreamSynchronize(s); // 必须同步才能知道有多少个框
+    cudaStreamSynchronize(s); 
     int count = *box_count_.cpu();
 
     if (count > 0)
     {
-        // 拷贝筛选后的结果到 CPU
         std::vector<float> h_boxes(count * 4);
         std::vector<float> h_scores(count);
         std::vector<int> h_indices(count);
@@ -511,12 +515,9 @@ void Sam3Infer::postprocess(InferResult &image_result, int global_prompt_idx, in
             return;
         }
 
-        box_affine_matrices_.cpu(count * 6); 
-        box_affine_matrices_.gpu(count * 6); 
-        float* h_base_matrix = mask_affine_matrix_.cpu() + image_idx * 6; // 原图的基础变换矩阵
-        float* h_box_matrices = box_affine_matrices_.cpu();
+        float* h_base_matrix = mask_affine_matrix_.cpu() + image_idx * 6;
+        float* h_box_matrices = box_affine_matrices_.cpu(); 
 
-        // 计算所有 Box 的总像素面积，以便分配紧凑的 buffer
         size_t total_mask_pixels = 0;
         std::vector<size_t> mask_offsets(count);
         std::vector<cv::Size> mask_sizes(count);
@@ -524,16 +525,10 @@ void Sam3Infer::postprocess(InferResult &image_result, int global_prompt_idx, in
         for (int i = 0; i < count; ++i)
         {
             float *b = h_boxes.data() + i * 4;
-            int x1 = (int)b[0];
-            int y1 = (int)b[1];
-            int x2 = (int)b[2];
-            int y2 = (int)b[3];
-            
-            // 限制边界防止越界
-            int img_w = original_image_sizes_[image_idx].first;
-            int img_h = original_image_sizes_[image_idx].second;
-            x1 = std::max(0, x1); y1 = std::max(0, y1);
-            x2 = std::min(img_w, x2); y2 = std::min(img_h, y2);
+            int x1 = std::max(0, (int)b[0]);
+            int y1 = std::max(0, (int)b[1]);
+            int x2 = std::min(original_image_sizes_[image_idx].first, (int)b[2]);
+            int y2 = std::min(original_image_sizes_[image_idx].second, (int)b[3]);
             
             int box_w = std::max(1, x2 - x1);
             int box_h = std::max(1, y2 - y1);
@@ -542,36 +537,18 @@ void Sam3Infer::postprocess(InferResult &image_result, int global_prompt_idx, in
             mask_offsets[i] = total_mask_pixels;
             total_mask_pixels += box_w * box_h;
 
-            // --- 核心数学逻辑 ---
-            // 原始矩阵 M 将 (dst_x, dst_y) 映射到 source。
-            // 现在的 dst 是 box 内部坐标 (bx, by)。
-            // 关系: dst_x_global = bx + box_x1
-            //       dst_y_global = by + box_y1
-            // Src = M * Dst_Global
-            // Src = M * (Dst_Box + Offset)
-            // Src = M * Dst_Box + (M * Offset)
-            // 所以，新的平移分量 Tx' = M00*x1 + M01*y1 + Tx
-            //      新的平移分量 Ty' = M10*x1 + M11*y1 + Ty
-            
             float* m_dst = h_box_matrices + i * 6;
-            // 复制旋转缩放分量
             m_dst[0] = h_base_matrix[0]; m_dst[1] = h_base_matrix[1];
             m_dst[3] = h_base_matrix[3]; m_dst[4] = h_base_matrix[4];
-            
-            // 计算新的平移分量
             m_dst[2] = h_base_matrix[0] * x1 + h_base_matrix[1] * y1 + h_base_matrix[2];
             m_dst[5] = h_base_matrix[3] * x1 + h_base_matrix[4] * y1 + h_base_matrix[5];
         }
 
-        // 2. 分配 Mask 显存 (按需分配)
         mask_buffer_.gpu(total_mask_pixels);
         mask_buffer_.cpu(total_mask_pixels);
-        
-        // 上传矩阵
+
         cudaMemcpyAsync(box_affine_matrices_.gpu(), box_affine_matrices_.cpu(), count * 6 * sizeof(float), cudaMemcpyHostToDevice, s);
 
-        // 3. 循环发射 Kernel
-        // 这里的循环开销很小，因为只是发射 Kernel，不做同步
         for (int i = 0; i < count; ++i)
         {
             int idx = h_indices[i];
@@ -581,26 +558,18 @@ void Sam3Infer::postprocess(InferResult &image_result, int global_prompt_idx, in
 
             warp_affine_bilinear_single_channel_mask_plane(
                 src, mask_width_, mask_width_, mask_height_,
-                dst, mask_sizes[i].width, mask_sizes[i].height, // 目标尺寸变为 Box 尺寸
+                dst, mask_sizes[i].width, mask_sizes[i].height,
                 d_matrix, 0, s);
         }
 
-        // 4. 拷贝回 CPU
         cudaMemcpyAsync(mask_buffer_.cpu(), mask_buffer_.gpu(), total_mask_pixels, cudaMemcpyDeviceToHost, s);
-        cudaStreamSynchronize(s); // Sync 2: 等待所有 Mask 生成完成
+        cudaStreamSynchronize(s);
 
-        // 5. 组装结果
         for (int i = 0; i < count; ++i)
         {
             float *b = h_boxes.data() + i * 4;
-            // 这里的 mask_ptr 指向的是紧凑排列的 Mask 数据
             uint8_t *mask_ptr = mask_buffer_.cpu() + mask_offsets[i];
-            
-            // 构造 cv::Mat，注意它现在是 Box 大小，而不是全图大小
             cv::Mat bin_mask(mask_sizes[i].height, mask_sizes[i].width, CV_8U, mask_ptr);
-            
-            // 结果追加
-            // 客户端或可视化代码需要知道 mask 是相对于 box 的 (SegmentationBox 通常隐含了这个逻辑)
             image_result.push_back(object::createSegmentationBox(b[0], b[1], b[2], b[3], bin_mask.clone(), h_scores[i], -1, label));
         }
     }
@@ -608,117 +577,96 @@ void Sam3Infer::postprocess(InferResult &image_result, int global_prompt_idx, in
 
 InferResultArray Sam3Infer::forwards(const std::vector<Sam3Input> &inputs, bool return_mask, void *stream)
 {
-    original_image_sizes_.clear();
     if (inputs.empty()) return {};
 
-    int num_images = inputs.size();
-    
-    // 1. 统计 Prompt 总数和 Max Boxes
-    int total_prompts = 0;
-    int max_boxes = 0;
-    std::vector<int> prompts_per_image;
-    
-    for (const auto &inp : inputs) 
+    // 1. 检查图片数量是否超限
+    if (inputs.size() > (size_t)max_image_batch_) 
     {
-        int p_count = inp.prompts.empty() ? 1 : inp.prompts.size(); // 处理空 prompt 情况，虽然理应有
-        if (inp.prompts.empty()) 
-        {
-            p_count = 1;
-        }
-        prompts_per_image.push_back(p_count);
-        total_prompts += p_count;
-
-        for(const auto& p : inp.prompts) {
-            if ((int)p.boxes.size() > max_boxes) max_boxes = (int)p.boxes.size();
-        }
+        std::cerr << "Input image batch size (" << inputs.size() 
+                  << ") exceeds maximum supported (" << max_image_batch_ << "). Returning empty." << std::endl;
+        return InferResultArray(inputs.size()); // 返回空结果
     }
-
-    bool use_geom = !geometry_encoder_path_.empty() && max_boxes > 0;
-    int geom_len = use_geom ? (max_boxes + 1) : 0;
-    int prompt_len = text_ids_shape_[1] + geom_len;
 
     AutoDevice device_guard(gpu_id_);
 
-    // 2. 设置维度 (Decoder 使用 total_prompts 作为 Batch)
-    if (isdynamic_model_)
+    std::vector<PromptMeta> all_prompts;
+    int max_boxes_input = 0;
+
+    for (size_t i = 0; i < inputs.size(); ++i) 
     {
-        // Vision Encoder: Batch = Image Count
-        set_binding_dim(vision_encoder_trt_, 0, {num_images, 3, input_image_height_, input_image_width_});
-        
-        // Text Encoder: Batch = Total Prompts
-        set_binding_dim(text_encoder_trt_, 0, {total_prompts, text_ids_shape_[1]});
-        set_binding_dim(text_encoder_trt_, 1, {total_prompts, text_ids_shape_[1]});
-
-        // Decoder: Batch = Total Prompts (Vision feats 维度也随之改变)
-        set_binding_dim(decoder_trt_, 0, {total_prompts, fpn_feat_0_shape_[1], fpn_feat_0_shape_[2], fpn_feat_0_shape_[3]});
-        set_binding_dim(decoder_trt_, 1, {total_prompts, fpn_feat_0_shape_[1], fpn_feat_0_shape_[2] / 2, fpn_feat_0_shape_[3] / 2});
-        set_binding_dim(decoder_trt_, 2, {total_prompts, fpn_feat_0_shape_[1], fpn_feat_0_shape_[2] / 4, fpn_feat_0_shape_[3] / 4});
-        set_binding_dim(decoder_trt_, 3, {total_prompts, fpn_feat_0_shape_[1], fpn_feat_0_shape_[2] / 4, fpn_feat_0_shape_[3] / 4});
-        set_binding_dim(decoder_trt_, 4, {total_prompts, prompt_len, 256});
-        set_binding_dim(decoder_trt_, 5, {total_prompts, prompt_len});
-
-        if (use_geom) 
+        if (inputs[i].prompts.empty()) 
         {
-            set_binding_dim(geometry_encoder_trt_, 0, {total_prompts, max_boxes, 4});
-            set_binding_dim(geometry_encoder_trt_, 1, {total_prompts, max_boxes});
-            // Geometry Encoder 的 Vision 输入也必须是 Expanded 后的
-            set_binding_dim(geometry_encoder_trt_, 2, {total_prompts, 256, 72, 72}); // fpn_feat_2
-            set_binding_dim(geometry_encoder_trt_, 3, {total_prompts, 256, 72, 72}); // fpn_pos_2
+            all_prompts.push_back({(int)i, -1, nullptr});
+        } 
+        else 
+        {
+            for (size_t j = 0; j < inputs[i].prompts.size(); ++j) 
+            {
+                all_prompts.push_back({(int)i, (int)j, &inputs[i].prompts[j]});
+                if ((int)inputs[i].prompts[j].boxes.size() > max_boxes_input) 
+                {
+                    max_boxes_input = (int)inputs[i].prompts[j].boxes.size();
+                }
+            }
         }
     }
 
-    adjust_memory(num_images, total_prompts, use_geom ? max_boxes : 0);
-
+    // 3. Vision Encoder (一次性处理所有图片)
+    int num_images = inputs.size();
     for (int i = 0; i < num_images; ++i)
         preprocess(inputs[i], i, stream);
 
-    bool ok = true;
-    ok &= encode_image(stream);
-    
-    if (!ok) 
+    if (!encode_image(num_images, stream)) 
     {
-        std::cerr << "Vision Encoding failed" << std::endl;
         return InferResultArray(num_images);
     }
 
-    // Expand Features (Copy N -> M)
-    expand_vision_features(prompts_per_image, stream);
-
-    ok &= encode_text(inputs, total_prompts, stream);
+    // 4. Decoder 分批循环 (Batch Splitting)
+    InferResultArray results(num_images);
+    int total_prompts = all_prompts.size();
+    bool use_geom = !geometry_encoder_path_.empty() && max_boxes_input > 0;
     
-    if (use_geom)
-        ok &= encode_boxes(inputs, total_prompts, max_boxes, stream);
-        
-    // Decode (Batch = total_prompts)
-    if (ok)
-        ok &= decode(total_prompts, prompt_len, stream);
-
-    if (!ok) 
-    {
-        std::cerr << "Forward failed at decode stage" << std::endl;
-        return InferResultArray(num_images);
-    }
-
-    InferResultArray results(num_images); // 预分配 N 个结果集
+    // 如果实际 Box 数量超过预设显存分配，截断 (防止溢出)
+    if (max_boxes_input > max_boxes_per_prompt_) max_boxes_input = max_boxes_per_prompt_;
     
-    int global_idx = 0;
-    for (int i = 0; i < num_images; ++i) 
+    int prompt_len = text_ids_shape_[1] + (use_geom ? (max_boxes_input + 1) : 0);
+
+    for (int chunk_start = 0; chunk_start < total_prompts; chunk_start += max_prompt_batch_) 
     {
-        float confidence_threshold = inputs[i].confidence_threshold;
-        int p_count = prompts_per_image[i];
-        for (int p = 0; p < p_count; ++p) 
+        int chunk_end = std::min(chunk_start + max_prompt_batch_, total_prompts);
+        int current_batch_size = chunk_end - chunk_start;
+
+        // 构造当前 Batch 的 Prompt 列表
+        std::vector<PromptMeta> batch_prompts(all_prompts.begin() + chunk_start, all_prompts.begin() + chunk_end);
+
+        // a. Gather Vision Features (从 N 张图的特征中 Gather 到当前 batch 的 M 个 Prompt 特征)
+        gather_vision_features(batch_prompts, current_batch_size, stream);
+
+        // b. Encode Text
+        if (!encode_text(batch_prompts, current_batch_size, stream)) continue;
+
+        // c. Encode Geometry
+        if (use_geom) 
         {
-            std::string lbl = "object";
-            // 获取对应 Prompt 的 label
-            if (!inputs[i].prompts.empty()) 
-            {
-                lbl = inputs[i].prompts[p].text;
-                if(lbl.empty()) lbl = "object";
-            }
-            postprocess(results[i], global_idx, i, lbl, confidence_threshold, return_mask, stream);
-            global_idx++;
+            if (!encode_boxes(batch_prompts, current_batch_size, max_boxes_input, stream)) continue;
+        }
+
+        // d. Decode
+        if (!decode(current_batch_size, prompt_len, stream)) continue;
+
+        // e. Postprocess & Collect Results
+        for (int k = 0; k < current_batch_size; ++k) 
+        {
+            const auto& meta = batch_prompts[k];
+            std::string label = "object";
+            if (meta.ptr && !meta.ptr->text.empty()) label = meta.ptr->text;
+            
+            float conf = inputs[meta.image_idx].confidence_threshold;
+            
+            // 结果写入对应的 image_idx
+            postprocess(results[meta.image_idx], k, meta.image_idx, label, conf, return_mask, stream);
         }
     }
-    
+
     return results;
 }

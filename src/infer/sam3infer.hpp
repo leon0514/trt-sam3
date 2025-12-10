@@ -7,6 +7,7 @@
 #include "common/tensorrt.hpp"
 #include "common/device.hpp"
 #include <unordered_map>
+#include <vector>
 
 class Sam3Infer : public InferBase
 {
@@ -43,23 +44,30 @@ public:
     virtual InferResultArray forwards(const std::vector<Sam3Input> &inputs, bool return_mask = false, void *stream = nullptr) override;
 
 private:
+    // 定义内部结构用于扁平化 Prompt
+    struct PromptMeta {
+        int image_idx;          // 该 Prompt 属于第几张图
+        int original_idx;       // 该 Prompt 在原图 vector 中的索引
+        const Sam3PromptUnit* ptr;  // 指向原始 Prompt 数据的指针
+    };
+
     // 内部处理函数
     void preprocess(const Sam3Input &input, int ibatch, void *stream);
-    bool encode_image(void *stream);
+    bool encode_image(int batch_size, void *stream);
     
-    // 特征扩展：将 Vision Encoder 的结果 (Batch N) 广播到 (Batch M = Total Prompts)
-    void expand_vision_features(const std::vector<int>& prompts_per_image, void* stream);
+    // 修改：Gather 特征，根据当前 Prompt Batch 对应的图片索引，从 Vision 特征中收集数据
+    void gather_vision_features(const std::vector<PromptMeta>& batch_prompts, int batch_size, void* stream);
 
-    // 修改后的编码函数，基于总 Prompt 数量
-    bool encode_text(const std::vector<Sam3Input> &inputs, int total_prompts, void *stream);
-    bool encode_boxes(const std::vector<Sam3Input> &inputs, int total_prompts, int max_boxes, void *stream);
-    bool decode(int total_prompts, int prompt_len, void *stream);
+    // 修改后的编码函数，基于当前分批的 Batch Size
+    bool encode_text(const std::vector<PromptMeta> &batch_prompts, int batch_size, void *stream);
+    bool encode_boxes(const std::vector<PromptMeta> &batch_prompts, int batch_size, int max_boxes, void *stream);
+    bool decode(int batch_size, int prompt_len, void *stream);
     
-    // 后处理现在需要知道当前是第几个 global prompt，以及属于哪张原图
-    void postprocess(InferResult &image_result, int global_prompt_idx, int image_idx, const std::string &label, float confidence_threshold, bool return_mask, void *stream);
+    // 后处理
+    void postprocess(InferResult &image_result, int batch_idx, int image_idx, const std::string &label, float confidence_threshold, bool return_mask, void *stream);
 
-    // 内存与维度管理
-    void adjust_memory(int image_batch_size, int total_prompts, int max_boxes);
+    // 内存初始化 (只调用一次)
+    void allocate_memory_once();
     void set_binding_dim(std::shared_ptr<TensorRT::Engine> &engine, int binding_index, const std::vector<int> &dims);
 
 private:
@@ -69,8 +77,14 @@ private:
     int input_image_height_ = 1008;
     int gpu_id_ = 0;
 
+    // --- 批处理限制配置 ---
+    // 可根据显存大小调整
+    const int max_image_batch_ = 2;   // 这种 Vision Encoder 比较大，限制同时处理的图片数
+    const int max_prompt_batch_ = 4;  // Decoder 较小，但显存有限，限制每次 Decode 的 Prompt 数
+    const int max_boxes_per_prompt_ = 20; // 预设支持的最大 Box 数量
+
     // 状态变量
-    std::vector<std::pair<int, int>> original_image_sizes_;
+    std::vector<std::pair<int, int>> original_image_sizes_; // Size: max_image_batch_
     int num_queries_ = 200;
     int mask_height_ = 288;
     int mask_width_ = 288;
@@ -99,25 +113,28 @@ private:
     std::vector<int> text_ids_shape_;
     std::vector<int> geom_box_shape_;
 
-    // Image Batch buffers (Size N)
+    // Image Batch buffers (Size: max_image_batch_)
     tensor::Memory<float> preprocessed_images_;
     std::vector<std::shared_ptr<tensor::Memory<uint8_t>>> original_images_buf_;
     tensor::Memory<float> affine_matrix_;
-    tensor::Memory<float> box_affine_matrices_;
     
+    // Mask 后处理需要对应原图的矩阵 (Size: max_image_batch_)
+    tensor::Memory<float> mask_affine_matrix_;
+
+    // Vision Encoder Outputs (Size: max_image_batch_)
     tensor::Memory<float> fpn_feat_0_;
     tensor::Memory<float> fpn_feat_1_;
     tensor::Memory<float> fpn_feat_2_;
     tensor::Memory<float> fpn_pos_2_;
 
-    // Expanded Feature buffers for Decoder (Size M = Total Prompts)
-    // 我们需要把 vision feature 复制多份给不同的 prompt 使用
-    tensor::Memory<float> fpn_feat_0_expanded_;
-    tensor::Memory<float> fpn_feat_1_expanded_;
-    tensor::Memory<float> fpn_feat_2_expanded_;
-    tensor::Memory<float> fpn_pos_2_expanded_;
+    // Decoder Input Buffers (Size: max_prompt_batch_)
+    // 这些是从 Vision Output Gather 过来的
+    tensor::Memory<float> fpn_feat_0_gather_;
+    tensor::Memory<float> fpn_feat_1_gather_;
+    tensor::Memory<float> fpn_feat_2_gather_;
+    tensor::Memory<float> fpn_pos_2_gather_;
 
-    // Prompt Batch buffers (Size M)
+    // Prompt Inputs (Size: max_prompt_batch_)
     tensor::Memory<int64_t> text_input_ids_;
     tensor::Memory<int64_t> text_attention_mask_;
 
@@ -133,20 +150,19 @@ private:
     tensor::Memory<float> prompt_features_;
     tensor::Memory<bool> prompt_mask_;
 
-    // Decoder Output (Size M)
+    // Decoder Output (Size: max_prompt_batch_)
     tensor::Memory<float> pred_masks_;
     tensor::Memory<float> pred_boxes_;
     tensor::Memory<float> pred_logits_;
     tensor::Memory<float> presence_logits_;
 
-    // Postprocess (Shared/Reused per single prompt decoding usually, or huge batch)
-    // 为了批处理，我们按最大量分配
+    // Postprocess (Size: max_prompt_batch_)
     tensor::Memory<float> filter_boxes_;
     tensor::Memory<float> filter_scores_;
     tensor::Memory<int> filter_indices_;
     tensor::Memory<int> box_count_;
     tensor::Memory<uint8_t> mask_buffer_;
-    tensor::Memory<float> mask_affine_matrix_;
+    tensor::Memory<float> box_affine_matrices_; // Mask 恢复时针对每个 Box 的矩阵
 };
 
 #endif // SAM3INFER_HPP__

@@ -36,47 +36,61 @@ void setup_data(std::shared_ptr<InferBase> engine)
         engine->setup_text_inputs("hand", HAND_IDS, HAND_MASK);
     }
 }
-int main()
+
+void speed_test()
 {
     auto engine = load(VISION_MODEL, TEXT_MODEL, GEOMETRY_ENCODER_PATH, DECODER_MODEL, GPU_ID);
-    if (!engine) {
-        std::cerr << "Failed to load engine!" << std::endl;
-        return -1;
-    }
-    setup_data(engine);
-
-    cv::Mat img = cv::imread("images/smx.jpg"); 
-
-    std::vector<Sam3PromptUnit> prompts;
-    prompts.emplace_back("person"); 
-    prompts.emplace_back("hand");
-
-
-    cv::Mat img1 = cv::imread("images/smx.jpg");
-
-    std::vector<Sam3PromptUnit> prompts1;
-    prompts1.emplace_back("person");
-    prompts1.emplace_back("hand");
+    //prepare inputs
+    std::vector<std::string> image_paths = { "images/smx.jpg" };
 
     std::vector<Sam3Input> inputs;
-    inputs.emplace_back(img, prompts, 0.5);
-    inputs.emplace_back(img1, prompts1, 0.5);
-
-    printf("Input constructed: 1 Image with %zu Prompts.\n", prompts.size());
-
-    for (int i = 0; i < 10; i++)
-    engine->forwards(inputs);
+    for (const auto &image_path : image_paths)
+    {
+        cv::Mat img = cv::imread(image_path);
+        std::vector<Sam3PromptUnit> prompts;
+        prompts.emplace_back("person"); 
+        prompts.emplace_back("hand");
+        inputs.emplace_back(img, prompts, 0.5);
+    }
 
     nv::EventTimer timer;
     timer.start();
-    for (int i = 0; i < 200; i++)
-        auto results = engine->forwards(inputs, true);
+    for (int i = 0; i < 1000; i++)
+        engine->forwards(inputs);
     float ms = timer.stop();
-    printf("Inference 400 images finished in %.2f ms, fps %f.\n", ms, 400 / (ms / 1000) );
+    printf("Inference 1000 images finished in %.2f ms, fps %f.\n", ms, 1000 / (ms / 1000) );   
+}
 
-    // osd(img, results[0]);
-    // cv::imwrite("output/persons.jpg", img);
-    // osd(img1, results[1]);
-    // cv::imwrite("output/smx.jpg", img1);
+void test_text_prompt()
+{
+    auto engine = load(VISION_MODEL, TEXT_MODEL, GEOMETRY_ENCODER_PATH, DECODER_MODEL, GPU_ID);
+    setup_data(engine);
+    std::vector<std::string> image_paths = { "images/smx.jpg" };
+
+    std::vector<Sam3Input> inputs;
+    for (const auto &image_path : image_paths)
+    {
+        cv::Mat img = cv::imread(image_path);
+        std::vector<Sam3PromptUnit> prompts;
+        prompts.emplace_back("person"); 
+        prompts.emplace_back("hand");
+        inputs.emplace_back(img, prompts, 0.5);
+    }
+    auto results = engine->forwards(inputs, true);
+
+    for (size_t i = 0; i < results.size(); i++)
+    {
+        std::string image_path = image_paths[i];
+        cv::Mat img = inputs[i].image;
+        osd(img, results[i]);
+        std::string output_path = "output/" + image_path;
+        cv::imwrite(output_path, img);
+    }
+}
+
+int main()
+{
+    speed_test();
+    test_text_prompt();
     return 0;
 }

@@ -40,29 +40,35 @@ public:
                            const std::array<int64_t, 32> &input_ids,
                            const std::array<int64_t, 32> &attention_mask) override;
 
+    bool setup_geometry_input(const cv::Mat &image,
+                              const std::string &label,
+                              const std::vector<std::pair<std::string, std::array<float, 4>>> &boxes) override;
+
     // 核心实现
     virtual InferResultArray forwards(const std::vector<Sam3Input> &inputs, bool return_mask = false, void *stream = nullptr) override;
+    virtual InferResultArray forwards(const std::vector<Sam3Input> &inputs, const std::string &geom_label, bool return_mask = false, void *stream = nullptr) override;
 
 private:
     // 定义内部结构用于扁平化 Prompt
-    struct PromptMeta {
-        int image_idx;          // 该 Prompt 属于第几张图
-        int original_idx;       // 该 Prompt 在原图 vector 中的索引
-        const Sam3PromptUnit* ptr;  // 指向原始 Prompt 数据的指针
+    struct PromptMeta
+    {
+        int image_idx;             // 该 Prompt 属于第几张图
+        int original_idx;          // 该 Prompt 在原图 vector 中的索引
+        const Sam3PromptUnit *ptr; // 指向原始 Prompt 数据的指针
     };
 
     // 内部处理函数
     void preprocess(const Sam3Input &input, int ibatch, void *stream);
     bool encode_image(int batch_size, void *stream);
-    
+
     // 修改：Gather 特征，根据当前 Prompt Batch 对应的图片索引，从 Vision 特征中收集数据
-    void gather_vision_features(const std::vector<PromptMeta>& batch_prompts, int batch_size, void* stream);
+    void gather_vision_features(const std::vector<PromptMeta> &batch_prompts, int batch_size, void *stream);
 
     // 修改后的编码函数，基于当前分批的 Batch Size
     bool encode_text(const std::vector<PromptMeta> &batch_prompts, int batch_size, void *stream);
     bool encode_boxes(const std::vector<PromptMeta> &batch_prompts, int batch_size, int max_boxes, void *stream);
     bool decode(int batch_size, int prompt_len, void *stream);
-    
+
     // 后处理
     void postprocess(InferResult &image_result, int batch_idx, int image_idx, const std::string &label, float confidence_threshold, bool return_mask, void *stream);
 
@@ -79,8 +85,8 @@ private:
 
     // --- 批处理限制配置 ---
     // 可根据显存大小调整
-    const int max_image_batch_ = 2;   // 这种 Vision Encoder 比较大，限制同时处理的图片数
-    const int max_prompt_batch_ = 4;  // Decoder 较小，但显存有限，限制每次 Decode 的 Prompt 数
+    const int max_image_batch_ = 2;       // 这种 Vision Encoder 比较大，限制同时处理的图片数
+    const int max_prompt_batch_ = 4;      // Decoder 较小，但显存有限，限制每次 Decode 的 Prompt 数
     const int max_boxes_per_prompt_ = 20; // 预设支持的最大 Box 数量
 
     // 状态变量
@@ -117,7 +123,6 @@ private:
     tensor::Memory<float> preprocessed_images_;
     std::vector<std::shared_ptr<tensor::Memory<uint8_t>>> original_images_buf_;
     tensor::Memory<float> affine_matrix_;
-    
     // Mask 后处理需要对应原图的矩阵 (Size: max_image_batch_)
     tensor::Memory<float> mask_affine_matrix_;
 
@@ -146,6 +151,10 @@ private:
 
     tensor::Memory<float> geom_features_;
     tensor::Memory<bool> geom_mask_;
+
+    // 用来存储预先设置好的geometry model的结果
+    std::unordered_map<std::string, std::shared_ptr<tensor::Memory<float>>> geom_features_cache_;
+    std::unordered_map<std::string, std::shared_ptr<tensor::Memory<bool>>> geom_mask_cache_;
 
     tensor::Memory<float> prompt_features_;
     tensor::Memory<bool> prompt_mask_;

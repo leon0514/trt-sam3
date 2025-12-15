@@ -165,13 +165,13 @@ def demo_box_prompt(engine):
 # ==============================================================================
 def demo_multi_class_prompt(engine, tokenizer):
     print("\n=== Running Multi-Class Prompt Test ===")
-    image_path = "images/smx.jpg"
+    image_path = "images/9.png"
     image = cv2.imread(image_path)
     if image is None:
         print(f"Skipping: {image_path} not found.")
         return
 
-    prompts_text = ["helmet", "head", "hand", "clothes", "body", "tie", "glasses", "hair", "road"]
+    prompts_text = ["person", "head", "stair", "clothes"]
     
     # 1. 注册 Token (重要)
     register_prompts(engine, tokenizer, prompts_text)
@@ -183,15 +183,16 @@ def demo_multi_class_prompt(engine, tokenizer):
         prompt_units.append(trtsam3.Sam3PromptUnit(txt))
     
     # 3. 构造 Input 对象
-    input_obj = trtsam3.Sam3Input(image, prompt_units, 0.7)
+    input_obj = trtsam3.Sam3Input(image, prompt_units, 0.6)
 
     # 4. 推理
     # engine.forwards 接受一个 inputs 列表，这里我们只传一张图
-    for _ in range(100):
-        batch_results = engine.forwards([input_obj], True)
+    # for _ in range(100):
+    #     batch_results = engine.forwards([input_obj], True)
     
     # 5. 获取结果
     # batch_results[0] 包含了该张图片下所有 Prompt 检测到的物体
+    batch_results = engine.forwards([input_obj], True)
     image_results = batch_results[0]
     
     print(f"Detected {len(image_results)} objects across {len(prompts_text)} prompts.")

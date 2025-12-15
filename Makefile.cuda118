@@ -4,18 +4,18 @@ workdir   := workspace
 srcdir    := src
 objdir    := objs
 stdcpp    := c++17
-cuda_home := /usr/local/cuda-13
+cuda_home := /usr/local/cuda-11
 cuda_arch := 8.6
 nvcc      := $(cuda_home)/bin/nvcc -ccbin=$(cc)
 
 
 project_include_path   := src
 opencv_include_path    := /usr/include/opencv4
-trt_include_path       := /opt/nvidia/TensorRT-10.9.0.34/include
+trt_include_path       := /opt/nvidia/TensorRT-10.13.0.35/targets/x86_64-linux-gnu/include
 cuda_include_path      := $(cuda_home)/include
 freetype_include_path  := /usr/include/freetype2
 
-python_include_path  := /usr/include/python3.12
+python_include_path  := /usr/include/python3.10
 
 
 include_paths        := $(project_include_path) \
@@ -28,7 +28,7 @@ include_paths        := $(project_include_path) \
 
 
 opencv_library_path  := /workspace/compile/__install/opencv490/lib
-trt_library_path     := /opt/nvidia/TensorRT-10.9.0.34/lib
+trt_library_path     := /opt/nvidia/TensorRT-10.13.0.35/targets/x86_64-linux-gnu/lib
 cuda_library_path    := $(cuda_home)/lib64/
 python_library_path  := 
 

@@ -22,6 +22,7 @@ public:
 
     // 批量推理 (Core API)
     virtual InferResultArray forwards(const std::vector<Sam3Input> &inputs, bool return_mask = false, void *stream = nullptr) = 0;
+    virtual InferResultArray forwards(const std::vector<Sam3Input> &inputs, const std::string &geom_label, bool return_mask = false, void *stream = nullptr) = 0;
 
     // 单个推理 (Wrapper)
     virtual InferResult forward(const Sam3Input &input, bool return_mask = false, void *stream = nullptr)
@@ -33,6 +34,11 @@ public:
     virtual void setup_text_inputs(const std::string &input_text,
                                    const std::array<int64_t, 32> &input_ids,
                                    const std::array<int64_t, 32> &attention_mask) {}
+
+    // 预先输入geometry 模型的框，尝试使用A图片的框来识别B图片的类别
+    virtual bool setup_geometry_input(const cv::Mat &image,
+                                      const std::string &label,
+                                      const std::vector<std::pair<std::string, std::array<float, 4>>> &boxes) { return false; }
 };
 
 // 工厂函数声明

@@ -7,6 +7,7 @@
 - C++ + CUDA 实现预处理/后处理内核，适合在 GPU 上高效运行
 - 支持基于文本提示和几何矩形框的 mask/box 输出
 - 利用批处理和内存复用实现同时识别多个文本提示类别
+- 在A图上画框，在B图上识别
 
 ## ONNX 模型以及 TensorRT 模型导出
 参考 `https://github.com/jamjamjon/usls.git`
@@ -36,6 +37,14 @@ nvcr.io/nvidia/tensorrt:25.10-py3
    <img src="https://raw.githubusercontent.com/leon0514/trt-sam3/refs/heads/main/workspace/assert/demo_mixed.jpg" width="80%"/>
 </div>
 
+- 提示框在A图片，识别在B图片
+<div align="center">
+   <img src="https://raw.githubusercontent.com/leon0514/trt-sam3/refs/heads/main/workspace/assert/A.jpg" width="80%"/>
+</div>
+
+<div align="center">
+   <img src="https://raw.githubusercontent.com/leon0514/trt-sam3/refs/heads/main/workspace/assert/B.jpg" width="80%"/>
+</div>
 
 ## 速度
 `50ms`左右

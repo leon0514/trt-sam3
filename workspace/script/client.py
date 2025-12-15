@@ -149,8 +149,6 @@ def run_inference(image_path, prompts, return_mask=True):
         if resp.status_code == 200:
             data = resp.json()
             results = data['results']
-            
-            # 可视化
             img = cv2.imread(image_path)
             visualize(img, results, save_name="client_" + os.path.basename(image_path))
         else:
@@ -165,9 +163,7 @@ if __name__ == "__main__":
     # 同时检测人、眼镜、汽车
     img_path = "../images/persons.jpg" # 请确保图片存在
     prompts_a = [
-        {"text": "person"},
-        {"text": "glasses"},
-        {"text": "car"}
+        {"text": "hat"},
     ]
     run_inference(img_path, prompts_a, return_mask=True)
 

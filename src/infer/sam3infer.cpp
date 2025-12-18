@@ -686,6 +686,9 @@ InferResultArray Sam3Infer::forwards(const std::vector<Sam3Input> &inputs, const
     // 获取缓存数据的指针 (假设缓存中存储的是 batch=1 时的结果，位于显存起始位置)
     Sam3PromptUnit text_unit(geom_label, {});
 
+    float *cached_feat_mem = geom_features_cache_[geom_label]->gpu();
+    bool *cached_mask_mem = geom_mask_cache_[geom_label]->gpu();
+
     for (int chunk_start = 0; chunk_start < num_images; chunk_start += max_prompt_batch_)
     {
         int chunk_end = std::min(chunk_start + max_prompt_batch_, num_images);
@@ -709,8 +712,6 @@ InferResultArray Sam3Infer::forwards(const std::vector<Sam3Input> &inputs, const
         {
             float *dst_feat = geom_features_.gpu() + i * geom_seq_len * 256;
             bool *dst_mask = geom_mask_.gpu() + i * geom_seq_len;
-            float *cached_feat_mem = geom_features_cache_[geom_label]->gpu();
-            bool *cached_mask_mem = geom_mask_cache_[geom_label]->gpu();
 
             cudaMemcpyAsync(dst_feat, cached_feat_mem, single_geom_feat_bytes, cudaMemcpyDeviceToDevice, s);
             cudaMemcpyAsync(dst_mask, cached_mask_mem, single_geom_mask_bytes, cudaMemcpyDeviceToDevice, s);

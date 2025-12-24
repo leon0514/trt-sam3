@@ -231,16 +231,53 @@ def demo_mixed_prompt(engine, tokenizer):
     cv2.imwrite(os.path.join(OUTPUT_DIR, "demo_mixed.jpg"), vis_img)
     print(f"Result saved to {os.path.join(OUTPUT_DIR, 'demo_mixed.jpg')}")
 
+def demo_prompt_from_another_image(engine, tokenizer):
+    prompt_image_path = "images/111.jpg"
+    prompt_image = cv2.imread(prompt_image_path)
+    if prompt_image is None:
+        print(f"Skipping: {prompt_image_path} not found.")
+        return
+
+    # 定义提示框并缓存到 geometry encoder（label 用于后续复用）
+    box_prompt = ("pos", [682, 311, 953, 455])
+    geom_label = "light"
+
+    ok = engine.setup_geometry_input(prompt_image, geom_label, [box_prompt])
+    if not ok:
+        print("Failed to setup geometry input.")
+        return
+
+    # 目标图像（在另一张图上使用之前缓存的 Prompt）
+    target_image_path = "images/112.jpg"
+    target_image = cv2.imread(target_image_path)
+    if target_image is None:
+        print(f"Skipping: {target_image_path} not found.")
+        return
+
+    # 构造输入（prompts 置空，使用 geom_label 从缓存中读取框特征）
+    input_obj = trtsam3.Sam3Input(target_image, [], 0.5)
+    results = engine.forwards([input_obj], geom_label, True)[0]
+
+    # 可视化并保存
+    bx1, by1, bx2, by2 = map(int, box_prompt[1])
+    cv2.rectangle(prompt_image, (bx1, by1), (bx2, by2), (255, 0, 0), 2)
+    cv2.putText(prompt_image, "Prompt Box", (bx1, by1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+
+    vis_target = osd(target_image, results)
+    cv2.imwrite(os.path.join(OUTPUT_DIR, "prompt_image.jpg"), prompt_image)
+    cv2.imwrite(os.path.join(OUTPUT_DIR, "prompt_reused_on_target.jpg"), vis_target)
+    print(f"Geometry prompt cached under '{geom_label}'. Outputs saved to {OUTPUT_DIR}")
+
 if __name__ == "__main__":
     try:
         # 初始化资源
         engine, tokenizer = init_system(gpu_id=0)
         
         # 运行不同的 Demo
-        demo_multi_class_prompt(engine, tokenizer) # 核心新功能
+        # demo_multi_class_prompt(engine, tokenizer) # 核心新功能
         # demo_box_prompt(engine)                    # 纯几何提示
         # demo_mixed_prompt(engine, tokenizer)       # 混合提示
-        
+        demo_prompt_from_another_image(engine, tokenizer)
         print("\nAll demos finished successfully.")
         
     except Exception as e:

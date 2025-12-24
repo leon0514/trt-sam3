@@ -116,16 +116,38 @@ PYBIND11_MODULE(trtsam3, m)
                     "Create a Sam3Infer instance with all 3 encoders.")
 
         // 成员函数
-        .def("setup_text_inputs", [](Sam3Infer &self, const std::string &text, const std::vector<int64_t> &input_ids, const std::vector<int64_t> &attention_mask)
+        .def("setup_geometry_input",
+             [](Sam3Infer &self, py::array_t<uint8_t> &img, const std::string &label,
+                const std::vector<std::pair<std::string, std::array<float, 4>>> &boxes)
+                {
+                    cv::Mat mat = numpy_to_mat(img).clone();
+                    py::gil_scoped_release release;
+                    return self.setup_geometry_input(mat, label, boxes);
+                },
+             py::arg("image"), py::arg("label"), py::arg("boxes"))
+        .def("setup_text_inputs", 
+            [](Sam3Infer &self, const std::string &text, const std::vector<int64_t> &input_ids, const std::vector<int64_t> &attention_mask)
              {
-            if (input_ids.size() != 32 || attention_mask.size() != 32) throw std::runtime_error("Inputs must be 32 elements");
-            std::array<int64_t, 32> arr_ids, arr_mask;
-            std::copy(input_ids.begin(), input_ids.end(), arr_ids.begin());
-            std::copy(attention_mask.begin(), attention_mask.end(), arr_mask.begin());
-            self.setup_text_inputs(text, arr_ids, arr_mask); }, py::arg("text"), py::arg("input_ids"), py::arg("attention_mask"))
-        
-        .def("forwards", [](Sam3Infer &self, const std::vector<Sam3Input> &inputs, bool return_mask)
+                if (input_ids.size() != 32 || attention_mask.size() != 32) throw std::runtime_error("Inputs must be 32 elements");
+                std::array<int64_t, 32> arr_ids, arr_mask;
+                std::copy(input_ids.begin(), input_ids.end(), arr_ids.begin());
+                std::copy(attention_mask.begin(), attention_mask.end(), arr_mask.begin());
+                self.setup_text_inputs(text, arr_ids, arr_mask); 
+            }, 
+            py::arg("text"), py::arg("input_ids"), py::arg("attention_mask"))
+        .def("forwards",
+            [](Sam3Infer &self, const std::vector<Sam3Input> &inputs, const std::string &geom_label, bool return_mask)
+            {
+                py::gil_scoped_release release;
+                return self.forwards(inputs, geom_label, return_mask, nullptr);
+            },
+            py::arg("inputs"), py::arg("geom_label"), py::arg("return_mask") = false)
+        .def("forwards", 
+            [](Sam3Infer &self, const std::vector<Sam3Input> &inputs, bool return_mask)
              {
-            py::gil_scoped_release release;
-            return self.forwards(inputs, return_mask, nullptr); }, py::arg("inputs"), py::arg("return_mask") = false);
+                py::gil_scoped_release release;
+                return self.forwards(inputs, return_mask, nullptr); 
+            }, 
+            py::arg("inputs"), py::arg("return_mask") = false);
+
 }

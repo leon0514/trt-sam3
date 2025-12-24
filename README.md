@@ -10,7 +10,11 @@
 - 在A图上画框，在B图上识别
 
 ## ONNX 模型以及 TensorRT 模型导出
-参考 `https://github.com/jamjamjon/usls.git`
+- 参考下面的仓库导出onnx模型  
+[https://github.com/jamjamjon/usls.git](https://github.com/jamjamjon/usls.git)
+
+- 已经导出的 onnx 模型地址    
+[https://huggingface.co/tangliyang/onnx_model_store](https://huggingface.co/tangliyang/onnx_model_store)
 
 ## 环境
 - 服务器    
@@ -60,7 +64,7 @@ make all
 ```
 
 ## 引用
-- 参考实现： `https://github.com/jamjamjon/usls.git`
+[https://github.com/jamjamjon/usls.git](https://github.com/jamjamjon/usls.git)
 
 ## 许可与贡献
 - 本仓库为个人/研究用途示例，欢迎 issue。

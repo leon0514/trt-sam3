@@ -166,6 +166,12 @@ public:
     void clear() { items.clear(); }
 
     void add(float l, float t, float r, float b, const std::string& text, int baseFontSize) {
+        float w = r - l;
+        float h = b - t;
+        // 强制给一个“视觉保护区”，比如半径 3px
+        if (w < 6.0f) { float cx = (l+r)/2; l = cx - 3; r = cx + 3; }
+        if (h < 6.0f) { float cy = (t+b)/2; t = cy - 3; b = cy + 3; }
+        
         LayoutBox objBox = {std::floor(l), std::floor(t), std::ceil(r), std::ceil(b)};
         
         LayoutItem item;

@@ -49,7 +49,7 @@ void speed_test()
         cv::Mat img = cv::imread(image_path);
         std::vector<Sam3PromptUnit> prompts;
         prompts.emplace_back("person");
-        prompts.emplace_back("hand");
+        // prompts.emplace_back("hand");
         inputs.emplace_back(img, prompts, 0.5);
     }
 
@@ -65,7 +65,7 @@ void test_text_prompt()
 {
     auto engine = load(VISION_MODEL, TEXT_MODEL, GEOMETRY_ENCODER_PATH, DECODER_MODEL, GPU_ID);
     setup_data(engine);
-    std::vector<std::string> image_paths = {"images/smx.jpg"};
+    std::vector<std::string> image_paths = {"images/persons.jpg"};
 
     std::vector<Sam3Input> inputs;
     for (const auto &image_path : image_paths)
@@ -73,7 +73,7 @@ void test_text_prompt()
         cv::Mat img = cv::imread(image_path);
         std::vector<Sam3PromptUnit> prompts;
         prompts.emplace_back("person");
-        prompts.emplace_back("hand");
+        // prompts.emplace_back("hand");
         inputs.emplace_back(img, prompts, 0.5);
     }
     auto results = engine->forwards(inputs, true);
@@ -126,7 +126,7 @@ void test_box_prompt()
 int main()
 {
     // speed_test();
-    // test_text_prompt();
-    test_box_prompt();
+    test_text_prompt();
+    // test_box_prompt();
     return 0;
 }

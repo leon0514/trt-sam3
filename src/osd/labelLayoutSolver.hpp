@@ -48,18 +48,25 @@ struct LayoutResult {
 struct LayoutConfig {
     int gridSize = 100;
     int spatialIndexThreshold = 20;
-    int maxIterations = 20;
+    int maxIterations = 30; // 稍微增加迭代次数，确保在多个锚点间找到最优解
     int paddingX = 2;
     int paddingY = 2;
 
-    float costTlOuter = 0.0f;
-    float costTrOuter = 10.0f;
-    float costBlOuter = 20.0f;
-    float costBrOuter = 30.0f;
-    float costSide    = 40.0f;
+    // --- 核心锚点成本 (对应 1, 2, 3, 4) ---
+    // 这里的差值（如 0, 10, 20, 30）决定了算法切换位置的“敏感度”
+    float costPos1_Top    = 0.0f;   // 优先级 1: 最优
+    float costPos2_Right  = 10.0f;  // 优先级 2
+    float costPos3_Bottom = 20.0f;  // 优先级 3
+    float costPos4_Left   = 30.0f;  // 优先级 4
 
-    float costSlidingPenalty = 5.0f;
+    // --- 惩罚项 ---
+    // 必须显著大于最高优先级锚点的成本 (30.0)，确保“不够了才开始滑动”
+    float costSlidingPenalty = 100.0f; 
+    
+    // 字号缩放惩罚：保持极大值，确保优先换位置而不是先缩小字号
     float costScaleTier      = 10000.0f; 
+    
+    // 遮挡/重叠惩罚：保持极大值，一旦发生碰撞，成本会迅速超过滑动惩罚
     float costOccludeObj     = 100000.0f;  
     float costOverlapBase    = 100000.0f;
 };
@@ -385,32 +392,58 @@ private:
                 candidatePool.emplace_back();
                 auto& c = candidatePool.back();
                 c.box = {x, y, x + fW, y + fH};
-                c.geometricCost = posCost; c.staticCost = 0;
+                c.geometricCost = posCost + scalePenalty;
+                c.staticCost = 0;
                 c.area = area; c.invArea = invArea;
                 c.fontSize = (int16_t)fontSize; c.textAscent = (int16_t)ts.height;
             };
+            
+            // 优先级 1: Top (上方左对齐)
+            addCand(obj.left, obj.top - fH, config.costPos1_Top);
 
-            // 采样优化
-            int steps = (lvl.tier <= 1) ? 8 : 4; 
-            float invSteps = (steps > 0) ? 1.0f / steps : 0.0f;
+            // 优先级 2: Right-Top (右侧顶部对齐)
+            addCand(obj.right, obj.top, config.costPos2_Right);
 
-            // Top/Bottom
+            // 优先级 3: Bottom (下方左对齐)
+            addCand(obj.left, obj.bottom, config.costPos3_Bottom);
+
+            // 优先级 4: Left-Top (左侧顶部对齐)
+            addCand(obj.left - fW, obj.top, config.costPos4_Left);
+
+            // --- 2. 生成滑动候选点 (动态步长版) ---
+            const float baseSlidePenalty = config.costSlidingPenalty; 
+
+            // 辅助函数：根据边长计算步长，确保每隔约 20-50 像素采样一次，但最少 3 步，最多 15 步
+            auto getDynamicSteps = [](float rangeSize) {
+                return std::clamp((int)(rangeSize / 40.0f), 3, 15);
+            };
+
+            // A. 顶部/底部边的滑动
             float rangeX = std::max(0.0f, obj.right - fW - obj.left);
-            for (int i = 0; i <= steps; ++i) {
-                float r = i * invSteps;
-                float x = obj.left + rangeX * r;
-                float posP = std::abs(r - 0.5f) * 2.0f * config.costSlidingPenalty + scalePenalty;
-                addCand(x, obj.top - fH, config.costTlOuter + posP); 
-                addCand(x, obj.bottom, config.costBlOuter + posP); 
+            if (rangeX > 1.0f) {
+                int stepsX = getDynamicSteps(rangeX);
+                float invStepsX = 1.0f / (float)stepsX;
+                for (int i = 1; i < stepsX; ++i) { // 1 到 steps-1，避开已有的锚点
+                    float r = i * invStepsX;
+                    float x = obj.left + rangeX * r;
+                    float penalty = baseSlidePenalty + (r * 10.0f); 
+                    addCand(x, obj.top - fH, config.costPos1_Top + penalty);
+                    addCand(x, obj.bottom, config.costPos3_Bottom + penalty);
+                }
             }
-            // Left/Right
+
+            // B. 左侧/右侧边的滑动
             float rangeY = std::max(0.0f, obj.bottom - fH - obj.top);
-            for (int i = 0; i <= steps; ++i) {
-                float r = i * invSteps;
-                float y = obj.top + rangeY * r;
-                float posP = config.costSide + std::abs(r - 0.5f) * 2.0f * config.costSlidingPenalty + scalePenalty;
-                addCand(obj.left - fW, y, posP); 
-                addCand(obj.right, y, posP); 
+            if (rangeY > 1.0f) {
+                int stepsY = getDynamicSteps(rangeY);
+                float invStepsY = 1.0f / (float)stepsY;
+                for (int i = 1; i < stepsY; ++i) {
+                    float r = i * invStepsY;
+                    float y = obj.top + rangeY * r;
+                    float penalty = baseSlidePenalty + (r * 10.0f);
+                    addCand(obj.right, y, config.costPos2_Right + penalty);
+                    addCand(obj.left - fW, y, config.costPos4_Left + penalty);
+                }
             }
         }
     }

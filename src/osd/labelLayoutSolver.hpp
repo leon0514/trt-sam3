@@ -2,42 +2,39 @@
 #define LABEL_LAYOUT_SOLVER_HPP
 
 #include <vector>
-#include <string>
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <functional>
+#include <cstring>
+#include <cstdint>
+#include <random>
 
-// ==========================================
-// 1. 基础几何结构
-// ==========================================
 struct LayoutBox {
     float left, top, right, bottom;
 
-    float width() const { return right - left; }
-    float height() const { return bottom - top; }
-    float area() const { return std::max(0.0f, width()) * std::max(0.0f, height()); }
-    float centerX() const { return (left + right) / 2.0f; }
-    float centerY() const { return (top + bottom) / 2.0f; }
+    inline float width() const { return right - left; }
+    inline float height() const { return bottom - top; }
+    inline float area() const { return std::max(0.0f, right - left) * std::max(0.0f, bottom - top); }
 
-    static bool intersects(const LayoutBox& a, const LayoutBox& b) {
-        return (a.left < b.right && a.right > b.left &&
-                a.top < b.bottom && a.bottom > b.top);
+    static inline float intersectArea(const LayoutBox& box1, const LayoutBox& box2) {
+        float l = std::max(box1.left, box2.left);
+        float r = std::min(box1.right, box2.right);
+        float t = std::max(box1.top, box2.top);
+        float b = std::min(box1.bottom, box2.bottom);
+        float w = std::max(0.0f, r - l);
+        float h = std::max(0.0f, b - t);
+        return w * h;
     }
-    static float intersectArea(const LayoutBox& a, const LayoutBox& b) {
-        float l = std::max(a.left, b.left);
-        float t = std::max(a.top, b.top);
-        float r = std::min(a.right, b.right);
-        float bb = std::min(a.bottom, b.bottom);
-        if (l < r && t < bb) return (r - l) * (bb - t);
-        return 0.0f;
+
+    static inline bool intersects(const LayoutBox& box1, const LayoutBox& box2) {
+        return (box1.left < box2.right && box1.right > box2.left &&
+                box1.top < box2.bottom && box1.bottom > box2.top);
     }
 };
 
 struct TextSize {
-    int width;
-    int height;     // Ascent
-    int baseline;   // Descent
+    int width, height, baseline;
 };
 
 struct LayoutResult {
@@ -45,270 +42,310 @@ struct LayoutResult {
     int fontSize;
     int width;
     int height;
-    int textAscent; 
-    int textDescent;
+    int textAscent;
 };
 
-// ==========================================
-// 2. 空间索引：均匀网格 (Uniform Grid)
-// ==========================================
-class UniformGrid {
-public:
-    int rows, cols;
-    float cellW, cellH;
-    std::vector<std::vector<int>> cells;
+struct LayoutConfig {
+    int gridSize = 100;
+    int spatialIndexThreshold = 20;
+    int maxIterations = 20;
+    int paddingX = 2;
+    int paddingY = 2;
 
-    UniformGrid(int w, int h, int gridSize = 100) {
+    float costTlOuter = 0.0f;
+    float costTrOuter = 10.0f;
+    float costBlOuter = 20.0f;
+    float costBrOuter = 30.0f;
+    float costSide    = 40.0f;
+
+    float costSlidingPenalty = 5.0f;
+    float costScaleTier      = 10000.0f; 
+    float costOccludeObj     = 100000.0f;  
+    float costOverlapBase    = 100000.0f;
+};
+
+
+class FlatUniformGrid {
+public:
+    int rows = 0, cols = 0;
+    float cellW = 100.0f, cellH = 100.0f;
+    float invCellW = 0.01f, invCellH = 0.01f;
+    
+    std::vector<int> gridHead;
+    struct Node { int id; int next; };
+    std::vector<Node> nodes; 
+
+    FlatUniformGrid() { nodes.reserve(4096); }
+
+    void resize(int w, int h, int gridSize) {
         if (gridSize <= 0) gridSize = 100;
-        cols = (w + gridSize - 1) / gridSize;
-        rows = (h + gridSize - 1) / gridSize;
+        int newCols = (w + gridSize - 1) / gridSize;
+        int newRows = (h + gridSize - 1) / gridSize;
         cellW = (float)gridSize;
         cellH = (float)gridSize;
-        cells.resize(rows * cols);
+        invCellW = 1.0f / cellW;
+        invCellH = 1.0f / cellH;
+
+        if (newCols * newRows > (int)gridHead.size()) {
+            gridHead.resize(newCols * newRows, -1);
+        }
+        cols = newCols;
+        rows = newRows;
     }
 
     void clear() {
-        for (auto& c : cells) c.clear();
+        if (!gridHead.empty()) {
+            std::fill(gridHead.begin(), gridHead.begin() + (rows * cols), -1);
+        }
+        nodes.clear();
     }
 
-    void insert(int id, const LayoutBox& box) {
-        int c1 = std::max(0, std::min(cols - 1, (int)(box.left / cellW)));
-        int r1 = std::max(0, std::min(rows - 1, (int)(box.top / cellH)));
-        int c2 = std::max(0, std::min(cols - 1, (int)(box.right / cellW)));
-        int r2 = std::max(0, std::min(rows - 1, (int)(box.bottom / cellH)));
+    inline void insert(int id, const LayoutBox& box) {
+        int c1 = std::max(0, std::min(cols - 1, (int)(box.left * invCellW)));
+        int r1 = std::max(0, std::min(rows - 1, (int)(box.top * invCellH)));
+        int c2 = std::max(0, std::min(cols - 1, (int)(box.right * invCellW)));
+        int r2 = std::max(0, std::min(rows - 1, (int)(box.bottom * invCellH)));
 
         for (int r = r1; r <= r2; ++r) {
+            int rowOffset = r * cols;
             for (int c = c1; c <= c2; ++c) {
-                cells[r * cols + c].push_back(id);
+                int idx = rowOffset + c;
+                nodes.push_back({id, gridHead[idx]});
+                gridHead[idx] = (int)nodes.size() - 1;
             }
         }
     }
 
-    // 查询并自动去重
-    void query(const LayoutBox& box, std::vector<int>& outIds, std::vector<int>& visited, int cookie) {
-        outIds.clear();
-        int c1 = std::max(0, std::min(cols - 1, (int)(box.left / cellW)));
-        int r1 = std::max(0, std::min(rows - 1, (int)(box.top / cellH)));
-        int c2 = std::max(0, std::min(cols - 1, (int)(box.right / cellW)));
-        int r2 = std::max(0, std::min(rows - 1, (int)(box.bottom / cellH)));
+    template <typename Visitor>
+    inline void query(const LayoutBox& box, std::vector<int>& visitedToken, int cookie, Visitor&& visitor) {
+        int c1 = std::max(0, std::min(cols - 1, (int)(box.left * invCellW)));
+        int r1 = std::max(0, std::min(rows - 1, (int)(box.top * invCellH)));
+        int c2 = std::max(0, std::min(cols - 1, (int)(box.right * invCellW)));
+        int r2 = std::max(0, std::min(rows - 1, (int)(box.bottom * invCellH)));
 
         for (int r = r1; r <= r2; ++r) {
+            int rowOffset = r * cols;
             for (int c = c1; c <= c2; ++c) {
-                const auto& cellIds = cells[r * cols + c];
-                for (int id : cellIds) {
-                    if (visited[id] != cookie) {
-                        visited[id] = cookie; // 标记已访问
-                        outIds.push_back(id);
+                int nodeIdx = gridHead[rowOffset + c];
+                while (nodeIdx != -1) {
+                    const auto& node = nodes[nodeIdx];
+                    if (visitedToken[node.id] != cookie) {
+                        visitedToken[node.id] = cookie;
+                        visitor(node.id);
                     }
+                    nodeIdx = node.next;
                 }
             }
         }
     }
 };
 
-// ==========================================
-// 3. 布局求解器类
-// ==========================================
+
 class LabelLayoutSolver {
 public:
     struct Candidate {
         LayoutBox box;
-        float baseCost;      // 包含 位置偏好 + 缩放惩罚
-        float occlusionCost; // 包含 遮挡物体惩罚
-        int fontSize;
-        int textAscent;
-        int textDescent;
-    };
-
-    struct LayoutItem {
-        int id;
-        LayoutBox objectBox;
-        std::string text;
-        int baseFontSize;
-        std::vector<Candidate> candidates;
-        int selectedIndex;
-        LayoutBox currentBox;
+        float geometricCost; 
+        float staticCost;    
+        float area;          
+        float invArea;       
+        int16_t fontSize;
+        int16_t textAscent;
     };
 
 private:
-    std::vector<LayoutItem> items;
-    int canvasWidth;
-    int canvasHeight;
+    struct LayoutItem {
+        int id;
+        LayoutBox objectBox; 
+        uint32_t candStart; 
+        uint16_t candCount; 
+        int selectedRelIndex; 
+        LayoutBox currentBox;
+        float currentArea;
+        float currentTotalCost;
+    };
+
+    LayoutConfig config;
+    int canvasWidth, canvasHeight;
     std::function<TextSize(const std::string&, int)> measureFunc;
 
-    // --- 权重配置 ---
-    const float COST_TL_OUTER = 0.0f;    
-    const float COST_TL_INNER = 50.0f;  
-    const float COST_BL_OUTER = 10.0f;   
-    const float COST_BL_INNER = 60.0f;  
-    const float COST_TR_OUTER = 20.0f;   
-    const float COST_TR_INNER = 70.0f;  
-    const float COST_BR_OUTER = 30.0f;   
-    const float COST_BR_INNER = 80.0f;  
-    const float COST_SIDE     = 40.0f;
-
-    const float COST_SLIDING_PENALTY = 5.0f; 
-
-    // 【缩放惩罚阶梯】：100万，确保优先选 1.0x
-    const float COST_SCALE_TIER = 1000000.0f; 
-
-    const float COST_OCCLUDE_OBJ = 50000.0f;
-    const float COST_OVERLAP_LABEL = 5000000.0f; 
-
-    const int PAD_X = 2;
-    const int PAD_Y = 2;
+    std::vector<LayoutItem> items;
+    std::vector<Candidate> candidatePool;
+    std::vector<int> processOrder; 
+    FlatUniformGrid grid;
+    std::vector<int> visitedCookie;
+    int currentCookie = 0;
+    std::mt19937 rng;
 
 public:
     template <typename Func>
-    LabelLayoutSolver(int w, int h, Func&& func) 
-        : canvasWidth(w), canvasHeight(h), measureFunc(std::forward<Func>(func)) {}
+    LabelLayoutSolver(int w, int h, Func&& func, const LayoutConfig& cfg = LayoutConfig())
+        : config(cfg), canvasWidth(w), canvasHeight(h), measureFunc(std::forward<Func>(func)), rng(12345)
+    {
+        items.reserve(128);
+        candidatePool.reserve(4096); 
+        visitedCookie.reserve(128);
+    }
 
-    void clear() { items.clear(); }
+    void setConfig(const LayoutConfig& cfg) { config = cfg; }
+    void setCanvasSize(int w, int h) { canvasWidth = w; canvasHeight = h; }
+
+    void clear() {
+        items.clear();
+        candidatePool.clear();
+        processOrder.clear();
+    }
 
     void add(float l, float t, float r, float b, const std::string& text, int baseFontSize) {
-        float w = r - l;
-        float h = b - t;
-        // 强制给一个“视觉保护区”，比如半径 3px
-        if (w < 6.0f) { float cx = (l+r)/2; l = cx - 3; r = cx + 3; }
-        if (h < 6.0f) { float cy = (t+b)/2; t = cy - 3; b = cy + 3; }
-        
-        LayoutBox objBox = {std::floor(l), std::floor(t), std::ceil(r), std::ceil(b)};
-        
+        if (r - l < 2.0f) { float cx = (l+r)*0.5f; l = cx-1; r = cx+1; }
+        if (b - t < 2.0f) { float cy = (t+b)*0.5f; t = cy-1; b = cy+1; }
+
         LayoutItem item;
         item.id = (int)items.size();
-        item.objectBox = objBox;
-        item.text = text;
-        item.baseFontSize = baseFontSize;
-
-        item.candidates = generateCandidates(objBox, text, baseFontSize);
+        item.objectBox = {std::floor(l), std::floor(t), std::ceil(r), std::ceil(b)};
+        item.candStart = (uint32_t)candidatePool.size();
         
-        // 初始保底
-        if (!item.candidates.empty()) {
-            item.selectedIndex = 0;
-            item.currentBox = item.candidates[0].box;
-        } else {
-            TextSize ts = measureFunc(text, 10);
-            float h = (float)(ts.height + ts.baseline + PAD_Y * 2);
-            item.candidates.push_back({{0, 0, (float)ts.width, h}, 9999999.0f, 0.0f, 10, ts.height, ts.baseline});
-            item.selectedIndex = 0;
-            item.currentBox = item.candidates[0].box;
-        }
+        generateCandidatesInternal(item, text, baseFontSize);
+        item.candCount = (uint16_t)(candidatePool.size() - item.candStart);
 
-        items.push_back(item);
+        if (item.candCount > 0) {
+            item.selectedRelIndex = 0;
+            const auto& c = candidatePool[item.candStart];
+            item.currentBox = c.box;
+            item.currentArea = c.area;
+            item.currentTotalCost = c.geometricCost;
+        } else {
+            Candidate dummy;
+            dummy.box = {0,0,0,0}; dummy.geometricCost = 1e9f; dummy.staticCost = 0;
+            dummy.area = 0.1f; dummy.invArea = 10.0f;
+            dummy.fontSize = (int16_t)baseFontSize; dummy.textAscent = 0;
+            candidatePool.push_back(dummy);
+            item.candCount = 1; item.selectedRelIndex = 0;
+            item.currentBox = dummy.box; item.currentArea = 0.1f; item.currentTotalCost = 1e9f;
+        }
+        items.push_back(std::move(item));
     }
 
     void solve() {
         if (items.empty()) return;
-        size_t N = items.size();
+        const size_t N = items.size();
 
-        UniformGrid grid(canvasWidth, canvasHeight, 100); 
-        std::vector<int> visited(N, 0); 
-        int cookie = 0;
-        std::vector<int> nearbyIds;
-        nearbyIds.reserve(N);
+        if (visitedCookie.size() < N) visitedCookie.resize(N, 0);
+        bool useGrid = (N >= (size_t)config.spatialIndexThreshold);
 
-        // 1. 静态环境分析
-        grid.clear();
-        for (const auto& item : items) {
-            grid.insert(item.id, item.objectBox);
+        if (useGrid) {
+            grid.resize(canvasWidth, canvasHeight, config.gridSize);
+            grid.clear();
+            for (const auto& item : items) grid.insert(item.id, item.objectBox);
         }
 
         for (auto& item : items) {
-            for (auto& cand : item.candidates) {
+            float minCost = std::numeric_limits<float>::max();
+            int bestIdx = 0;
+
+            for (uint32_t i = 0; i < item.candCount; ++i) {
+                Candidate& cand = candidatePool[item.candStart + i];
                 float penalty = 0.0f;
-                float cArea = cand.box.area();
-                if (cArea < 0.1f) continue;
 
-                cookie++;
-                grid.query(cand.box, nearbyIds, visited, cookie);
-
-                for (int otherId : nearbyIds) {
+                auto checkStaticConflict = [&](int otherId) {
                     const auto& other = items[otherId];
-                    float inter = LayoutBox::intersectArea(cand.box, other.objectBox);
-                    if (inter > 0) {
-                        if (item.id != other.id) penalty += (inter / cArea) * COST_OCCLUDE_OBJ;
-                        else penalty += (inter / cArea) * 500.0f; 
+                    // 先做快速 AABB 判定
+                    if (LayoutBox::intersects(cand.box, other.objectBox)) {
+                        float inter = LayoutBox::intersectArea(cand.box, other.objectBox);
+                        penalty += (inter * cand.invArea) * config.costOccludeObj;
                     }
-                }
-                cand.occlusionCost = penalty;
-            }
+                };
 
-            std::sort(item.candidates.begin(), item.candidates.end(), 
-                [](const Candidate& a, const Candidate& b) {
-                    return (a.baseCost + a.occlusionCost) < (b.baseCost + b.occlusionCost);
-                });
-            
-            item.selectedIndex = 0;
-            item.currentBox = item.candidates[0].box;
+                if (useGrid) {
+                    currentCookie++;
+                    grid.query(cand.box, visitedCookie, currentCookie, checkStaticConflict);
+                } else {
+                    for (const auto& other : items) checkStaticConflict(other.id);
+                }
+                cand.staticCost = penalty;
+                
+                float total = cand.geometricCost + cand.staticCost;
+                if (total < minCost) { minCost = total; bestIdx = (int)i; }
+            }
+            item.selectedRelIndex = bestIdx;
+            const auto& bestCand = candidatePool[item.candStart + bestIdx];
+            item.currentBox = bestCand.box;
+            item.currentArea = bestCand.area;
+            item.currentTotalCost = minCost;
         }
 
-        // 2. 动态冲突解决
-        int maxIter = 50; 
-        bool changed = true;
+        // 加入随机化与剪枝
+        processOrder.resize(N);
+        for(size_t i=0; i<N; ++i) processOrder[i] = (int)i;
 
-        for (int iter = 0; iter < maxIter && changed; ++iter) {
-            changed = false;
+        for (int iter = 0; iter < config.maxIterations; ++iter) {
+            std::shuffle(processOrder.begin(), processOrder.end(), rng);
+            int changeCount = 0;
 
-            grid.clear();
-            for (const auto& item : items) {
-                grid.insert(item.id, item.currentBox);
+            if (useGrid) {
+                grid.clear();
+                for (const auto& item : items) grid.insert(item.id, item.currentBox);
             }
 
-            for (size_t i = 0; i < items.size(); ++i) {
-                LayoutItem& itemA = items[i];
+            for (int idx : processOrder) {
+                auto& item = items[idx];
                 
-                bool hasConflict = false;
-                cookie++;
-                grid.query(itemA.currentBox, nearbyIds, visited, cookie);
+                auto calculateDynamicCost = [&](const LayoutBox& box, float invBoxArea, int selfId) -> float {
+                    float overlapCost = 0.0f;
+                    auto visitor = [&](int otherId) {
+                        if (selfId == otherId) return;
+                        const auto& otherBox = items[otherId].currentBox;
+                        // 先做 AABB 判定
+                        if (LayoutBox::intersects(box, otherBox)) {
+                            float inter = LayoutBox::intersectArea(box, otherBox);
+                            overlapCost += (inter * invBoxArea) * config.costOverlapBase;
+                        }
+                    };
+                    if (useGrid) {
+                        currentCookie++; 
+                        grid.query(box, visitedCookie, currentCookie, visitor);
+                    } else {
+                        for (size_t j = 0; j < N; ++j) visitor((int)j);
+                    }
+                    return overlapCost;
+                };
 
-                for (int j : nearbyIds) {
-                    if (i == (size_t)j) continue;
-                    if (LayoutBox::intersects(itemA.currentBox, items[j].currentBox)) {
-                        hasConflict = true;
-                        break;
+                const auto& curCand = candidatePool[item.candStart + item.selectedRelIndex];
+                float curDyn = calculateDynamicCost(item.currentBox, curCand.invArea, item.id);
+                float currentRealTotal = curCand.geometricCost + curCand.staticCost + curDyn;
+
+                if (currentRealTotal < 1.0f) continue; // 足够好，跳过
+
+                float bestIterCost = currentRealTotal;
+                int bestRelIdx = -1;
+
+                for (int i = 0; i < (int)item.candCount; ++i) {
+                    if (i == item.selectedRelIndex) continue;
+                    const auto& cand = candidatePool[item.candStart + i];
+
+                    // 启发式剪枝
+                    // 如果基础成本已经超过目前最优，则不需要进行动态重叠计算
+                    float baseCost = cand.geometricCost + cand.staticCost;
+                    if (baseCost >= bestIterCost) continue;
+
+                    float newOverlap = calculateDynamicCost(cand.box, cand.invArea, item.id);
+                    float newTotal = baseCost + newOverlap;
+
+                    if (newTotal < bestIterCost) {
+                        bestIterCost = newTotal;
+                        bestRelIdx = i;
                     }
                 }
 
-                if (hasConflict) {
-                    int bestIdx = -1;
-                    float minTotalCost = std::numeric_limits<float>::max();
-                    int checkCount = 0;
-
-                    for (int c = 0; c < (int)itemA.candidates.size(); ++c) {
-                        const auto& cand = itemA.candidates[c];
-                        float currentCost = cand.baseCost + cand.occlusionCost;
-
-                        if (c > 0 && currentCost > minTotalCost && currentCost > COST_OVERLAP_LABEL) break;
-
-                        bool overlapLabel = false;
-                        cookie++;
-                        grid.query(cand.box, nearbyIds, visited, cookie);
-
-                        for (int j : nearbyIds) {
-                            if (i == (size_t)j) continue;
-                            if (LayoutBox::intersects(cand.box, items[j].currentBox)) {
-                                overlapLabel = true; break;
-                            }
-                        }
-
-                        if (overlapLabel) currentCost += COST_OVERLAP_LABEL;
-
-                        if (currentCost < minTotalCost) {
-                            minTotalCost = currentCost;
-                            bestIdx = c;
-                        }
-
-                        checkCount++;
-                        if (checkCount > 150 && minTotalCost < COST_OVERLAP_LABEL) break;
-                    }
-
-                    if (bestIdx != -1 && bestIdx != itemA.selectedIndex) {
-                        itemA.selectedIndex = bestIdx;
-                        itemA.currentBox = itemA.candidates[bestIdx].box;
-                        changed = true;
-                    }
+                if (bestRelIdx != -1) {
+                    item.selectedRelIndex = bestRelIdx;
+                    const auto& newCand = candidatePool[item.candStart + bestRelIdx];
+                    item.currentBox = newCand.box;
+                    item.currentArea = newCand.area;
+                    changeCount++;
                 }
             }
+            if (changeCount == 0) break;
         }
     }
 
@@ -316,80 +353,66 @@ public:
         std::vector<LayoutResult> results;
         results.reserve(items.size());
         for (const auto& item : items) {
-            const auto& cand = item.candidates[item.selectedIndex];
+            const auto& cand = candidatePool[item.candStart + item.selectedRelIndex];
             results.push_back({
-                cand.box.left, cand.box.top, 
-                cand.fontSize, 
-                (int)cand.box.width(), (int)cand.box.height(),
-                cand.textAscent, cand.textDescent
+                cand.box.left, cand.box.top, (int)cand.fontSize, 
+                (int)cand.box.width(), (int)cand.box.height(), (int)cand.textAscent
             });
         }
         return results;
     }
 
 private:
-    std::vector<Candidate> generateCandidates(const LayoutBox& obj, const std::string& text, int baseSize) {
-        std::vector<Candidate> cands;
-        cands.reserve(256); 
-
-        struct ScaleLevel { float scale; int tier; };
-        std::vector<ScaleLevel> levels = {
-            {1.0f, 0}, {0.9f, 1}, {0.8f, 2}, {0.7f, 3}, {0.6f, 4}, {0.5f, 5}
+    void generateCandidatesInternal(LayoutItem& item, const std::string& text, int baseFontSize) {
+        static const struct { float scale; int tier; } levels[] = {
+            {1.0f, 0}, {0.9f, 1}, {0.8f, 2}, {0.75f, 3} 
         };
 
+        const auto& obj = item.objectBox; 
         for (const auto& lvl : levels) {
-            int fontSize = static_cast<int>(baseSize * lvl.scale);
+            int fontSize = (int)(baseFontSize * lvl.scale);
             if (fontSize < 9) break;
 
             TextSize ts = measureFunc(text, fontSize);
-            
-            float w = std::ceil((float)ts.width + PAD_X * 2);
-            float h = std::ceil((float)(ts.height + ts.baseline + PAD_Y * 2));
-            float scalePenalty = lvl.tier * COST_SCALE_TIER;
+            float fW = std::ceil((float)ts.width + config.paddingX * 2);
+            float fH = std::ceil((float)(ts.height + ts.baseline + config.paddingY * 2));
+            float scalePenalty = lvl.tier * config.costScaleTier;
+            float area = fW * fH;
+            float invArea = 1.0f / (area > 0.1f ? area : 1.0f);
 
-            int steps = (lvl.tier <= 1) ? 12 : 4;
+            auto addCand = [&](float x, float y, float posCost) {
+                if (x < 0 || y < 0 || x + fW > canvasWidth || y + fH > canvasHeight) return;
+                candidatePool.emplace_back();
+                auto& c = candidatePool.back();
+                c.box = {x, y, x + fW, y + fH};
+                c.geometricCost = posCost; c.staticCost = 0;
+                c.area = area; c.invArea = invArea;
+                c.fontSize = (int16_t)fontSize; c.textAscent = (int16_t)ts.height;
+            };
 
-            // 水平滑动
-            float minX = obj.left;
-            float maxX = std::max(obj.left, obj.right - w);
+            // 采样优化
+            int steps = (lvl.tier <= 1) ? 8 : 4; 
+            float invSteps = (steps > 0) ? 1.0f / steps : 0.0f;
+
+            // Top/Bottom
+            float rangeX = std::max(0.0f, obj.right - fW - obj.left);
             for (int i = 0; i <= steps; ++i) {
-                float r = (float)i / steps; 
-                float x = minX + (maxX - minX) * r;
-                float dist = std::min(r, 1.0f - r); 
-                float posP = dist * COST_SLIDING_PENALTY * 2.0f; 
-
-                tryAdd(cands, x, obj.top - h, w, h, COST_TL_OUTER + scalePenalty + posP, fontSize, ts);
-                tryAdd(cands, x, obj.top, w, h, COST_TL_INNER + scalePenalty + posP, fontSize, ts);
-                tryAdd(cands, x, obj.bottom, w, h, COST_BL_OUTER + scalePenalty + posP, fontSize, ts);
-                tryAdd(cands, x, obj.bottom - h, w, h, COST_BL_INNER + scalePenalty + posP, fontSize, ts);
+                float r = i * invSteps;
+                float x = obj.left + rangeX * r;
+                float posP = std::abs(r - 0.5f) * 2.0f * config.costSlidingPenalty + scalePenalty;
+                addCand(x, obj.top - fH, config.costTlOuter + posP); 
+                addCand(x, obj.bottom, config.costBlOuter + posP); 
             }
-
-            // 垂直滑动
-            float minY = obj.top;
-            float maxY = std::max(obj.top, obj.bottom - h);
+            // Left/Right
+            float rangeY = std::max(0.0f, obj.bottom - fH - obj.top);
             for (int i = 0; i <= steps; ++i) {
-                float r = (float)i / steps;
-                float y = minY + (maxY - minY) * r;
-                float posP = COST_SIDE + std::min(r, 1.0f - r) * COST_SLIDING_PENALTY * 2.0f;
-
-                tryAdd(cands, obj.left - w, y, w, h, posP + scalePenalty, fontSize, ts);
-                tryAdd(cands, obj.right, y, w, h, posP + scalePenalty, fontSize, ts);
+                float r = i * invSteps;
+                float y = obj.top + rangeY * r;
+                float posP = config.costSide + std::abs(r - 0.5f) * 2.0f * config.costSlidingPenalty + scalePenalty;
+                addCand(obj.left - fW, y, posP); 
+                addCand(obj.right, y, posP); 
             }
         }
-        return cands;
-    }
-
-    void tryAdd(std::vector<Candidate>& cands, float x, float y, float w, float h, 
-                float cost, int fs, const TextSize& ts) {
-        if (x < 0 || y < 0 || x + w > canvasWidth || y + h > canvasHeight) return;
-        Candidate cand;
-        cand.box = {std::floor(x), std::floor(y), std::floor(x + w), std::floor(y + h)};
-        cand.baseCost = cost;
-        cand.occlusionCost = 0.0f;
-        cand.fontSize = fs;
-        cand.textAscent = ts.height;
-        cand.textDescent = ts.baseline;
-        cands.push_back(cand);
     }
 };
 

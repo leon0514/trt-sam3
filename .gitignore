@@ -37,6 +37,8 @@ objs/*
 .idea
 .vscode
 
+build/*
+
 workspace/*
 !workspace/*.py
 !workspace/*.pyi

@@ -54,13 +54,9 @@ nvcr.io/nvidia/tensorrt:25.10-py3
 `50ms`左右
 
 ## 编译执行
-生成可执行文件 `pro`
-```
-make pro
-```
-生成python绑定包 `trtsam3.so`
-```
-make all
+```bash
+cmake .. -DCMAKE_PREFIX_PATH="$(python3 -m pybind11 --cmakedir)"
+make -j$(nproc)
 ```
 
 ## 引用

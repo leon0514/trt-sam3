@@ -17,18 +17,30 @@ set(CMAKE_RUNTIME_OUTPUT_PATH ${CMAKE_BINARY_DIR}/workspace)
 # =============================================================================
 # 2. 查找依赖项
 # =============================================================================
-# --- 查找通过pip安装的pybind11 ---
-find_package(pybind11 REQUIRED)
-message(STATUS "Found pybind11: ${pybind11_VERSION} (installed via package manager)")
+# 智能查找通过pip安装的pybind11
+execute_process(
+    COMMAND python3 -m pybind11 --cmakedir
+    OUTPUT_VARIABLE pybind11_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE pybind11_FOUND_RESULT
+)
+if(pybind11_FOUND_RESULT EQUAL 0)
+    find_package(pybind11 REQUIRED HINTS ${pybind11_DIR})
+    message(STATUS "Found pybind11: ${pybind11_VERSION} (at ${pybind11_DIR})")
+else()
+    message(WARNING "Could not auto-find pybind11. Falling back to standard search.")
+    find_package(pybind11 REQUIRED)
+endif()
 
-# --- 查找其他外部依赖 (保持不变) ---
-message(STATUS "Finding TensorRT components manually (for Docker-like environments)...")
-find_path(TENSORRT_INCLUDE_DIRS NvInfer.h HINTS /usr/include/x86_64-linux-gnu /usr/local/cuda/include /usr/include REQUIRED)
+# 手动查找TensorRT组件
+message(STATUS "Finding TensorRT components manually...")
+find_path(TENSORRT_INCLUDE_DIRS NvInfer.h HINTS /usr/include/x86_64-linux-gnu /usr/include REQUIRED)
 find_library(NVINFER_LIBRARY nvinfer REQUIRED)
 find_library(NVINFER_PLUGIN_LIBRARY nvinfer_plugin REQUIRED)
 find_library(NVONNXPARSER_LIBRARY nvonnxparser REQUIRED)
 set(TENSORRT_LIBRARIES ${NVINFER_LIBRARY} ${NVINFER_PLUGIN_LIBRARY} ${NVONNXPARSER_LIBRARY})
 
+# 查找其他依赖
 find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc videoio imgcodecs)
 find_package(CUDAToolkit REQUIRED)
 find_package(Python3 COMPONENTS Development REQUIRED)
@@ -36,25 +48,52 @@ find_package(Freetype REQUIRED)
 find_package(OpenMP REQUIRED)
 
 # =============================================================================
-# 3. 收集源文件
+# 3. 收集源文件 (最佳实践：明确列出所有文件)
 # =============================================================================
-# 收集所有核心逻辑的源文件 (不包含绑定文件 interface.cpp)
-file(GLOB_RECURSE CORE_SOURCES "src/*.cpp" "src/*.cu")
-list(FILTER CORE_SOURCES EXCLUDE REGEX ".*/interface\\.cpp$") # 核心库不包含绑定文件
+# A. 核心库的源文件
+set(CORE_SOURCES
+    src/common/createObject.cpp
+    src/common/image.cpp
+    src/common/memory.cu
+    src/common/norm.cpp
+    src/common/object.cpp
+    src/common/tensorrt.cpp
+    src/infer/infer.cpp
+    src/infer/sam3infer.cpp
+    src/kernels/postprocess.cu
+    src/kernels/preprocess.cu
+    src/kernels/process_kernel_warp.cu
+    src/osd/cvx_text.cpp
+    src/osd/osd.cpp
+)
+
+# B. Python绑定的源文件
+set(INTERFACE_SOURCES
+    src/interface.cpp
+)
+
+# C. C++可执行文件的源文件
+set(EXECUTABLE_SOURCES
+    src/main.cpp
+)
 
 # =============================================================================
 # 4. 定义构建目标
 # =============================================================================
-# A. 定义核心静态库 (包含除了interface.cpp之外的所有代码)
+# A. 定义核心静态库 (包含所有共享逻辑)
 add_library(trtsam_core STATIC ${CORE_SOURCES})
 
-# B. 使用 pybind11_add_module 创建Python模块 (编译 interface.cpp)
-# 这个函数由 find_package(pybind11) 提供，会自动处理命名和链接
-pybind11_add_module(trtsam3 SHARED src/interface.cpp)
+# B. 定义Python模块 (由interface.cpp创建)
+pybind11_add_module(trtsam3 SHARED ${INTERFACE_SOURCES})
 
-# C. 定义纯C++可执行文件 (由核心源文件构成)
-add_executable(pro ${CORE_SOURCES})
+# C. 定义纯C++可执行文件 (由main.cpp创建)
+add_executable(pro ${EXECUTABLE_SOURCES})
 
+# =============================================================================
+# 5. 设置目标属性 (链接)
+# =============================================================================
+# --- A. 为核心库 trtsam_core 配置所有外部依赖 ---
+# 使用PUBLIC，这样链接它的目标会自动继承这些属性
 target_include_directories(trtsam_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${OpenCV_INCLUDE_DIRS}
@@ -63,7 +102,6 @@ target_include_directories(trtsam_core PUBLIC
     ${FREETYPE_INCLUDE_DIRS}
 )
 
-# 使用PUBLIC，这样链接 trtsam_core 的目标会自动继承这些依赖
 target_link_libraries(trtsam_core PUBLIC
     ${OpenCV_LIBS}
     ${TENSORRT_LIBRARIES}
@@ -78,7 +116,6 @@ target_compile_options(trtsam_core PUBLIC -O2 -w -fPIC)
 # Python模块 和 C++可执行文件 都依赖于核心库
 target_link_libraries(trtsam3 PRIVATE trtsam_core)
 target_link_libraries(pro PRIVATE trtsam_core)
-
 
 # --- C. 为最终产物设置RPATH ---
 set_target_properties(trtsam3 pro PROPERTIES

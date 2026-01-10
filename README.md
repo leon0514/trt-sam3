@@ -16,6 +16,11 @@
 - 已经导出的 onnx 模型地址    
 [https://huggingface.co/tangliyang/onnx_model_store](https://huggingface.co/tangliyang/onnx_model_store)
 
+
+## Vision Encode 模型量化
+- 参考下面的仓库对sam3 vision encode模型进行int8量化
+[https://github.com/NVIDIA/Model-Optimizer/tree/main/examples/windows/onnx_ptq/sam2](https://github.com/NVIDIA/Model-Optimizer/tree/main/examples/windows/onnx_ptq/sam2)
+
 ## 环境
 - 服务器    
 ubuntu 24.04
@@ -57,6 +62,14 @@ nvcr.io/nvidia/tensorrt:25.10-py3
 ```bash
 cmake .. -DCMAKE_PREFIX_PATH="$(python3 -m pybind11 --cmakedir)"
 make -j$(nproc)
+```
+
+## 手动指定TensorRT
+```shell
+cmake .. -DTENSORRT_INCLUDE_DIRS=/opt/nvidia/TensorRT-10.13.0.35/include \
+-DNVINFER_LIBRARY=/opt/nvidia/TensorRT-10.13.0.35/targets/x86_64-linux-gnu/lib/ \
+-DNVINFER_PLUGIN_LIBRARY=/opt/nvidia/TensorRT-10.13.0.35/targets/x86_64-linux-gnu/lib/ \
+-DNVONNXPARSER_LIBRARY=/opt/nvidia/TensorRT-10.13.0.35/targets/x86_64-linux-gnu/lib/
 ```
 
 ## 引用

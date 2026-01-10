@@ -33,12 +33,30 @@ else()
 endif()
 
 # 手动查找TensorRT组件
-message(STATUS "Finding TensorRT components manually...")
-find_path(TENSORRT_INCLUDE_DIRS NvInfer.h HINTS /usr/include/x86_64-linux-gnu /usr/include REQUIRED)
-find_library(NVINFER_LIBRARY nvinfer REQUIRED)
-find_library(NVINFER_PLUGIN_LIBRARY nvinfer_plugin REQUIRED)
-find_library(NVONNXPARSER_LIBRARY nvonnxparser REQUIRED)
+find_path(TENSORRT_INCLUDE_DIRS NvInfer.h
+    HINTS ${TENSORRT_ROOT}/include /usr/include/x86_64-linux-gnu /usr/include
+    REQUIRED
+)
+
+# 使用 HINTS 来指导 find_library 在你指定的路径下查找
+find_library(NVINFER_LIBRARY nvinfer
+    HINTS ${TENSORRT_ROOT}/lib ${TENSORRT_ROOT}/targets/x86_64-linux-gnu/lib /usr/lib/x86_64-linux-gnu/
+    REQUIRED
+)
+find_library(NVINFER_PLUGIN_LIBRARY nvinfer_plugin
+    HINTS ${TENSORRT_ROOT}/lib ${TENSORRT_ROOT}/targets/x86_64-linux-gnu/lib /usr/lib/x86_64-linux-gnu/
+    REQUIRED
+)
+find_library(NVONNXPARSER_LIBRARY nvonnxparser
+    HINTS ${TENSORRT_ROOT}/lib ${TENSORRT_ROOT}/targets/x86_64-linux-gnu/lib /usr/lib/x86_64-linux-gnu/
+    REQUIRED
+)
+
 set(TENSORRT_LIBRARIES ${NVINFER_LIBRARY} ${NVINFER_PLUGIN_LIBRARY} ${NVONNXPARSER_LIBRARY})
+message(STATUS "Found TensorRT Include Path: ${TENSORRT_INCLUDE_DIRS}")
+message(STATUS "Found nvinfer library: ${NVINFER_LIBRARY}")
+message(STATUS "Found nvinfer_plugin library: ${NVINFER_PLUGIN_LIBRARY}")
+message(STATUS "Found nvonnxparser library: ${NVONNXPARSER_LIBRARY}")
 
 # 查找其他依赖
 find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc videoio imgcodecs)

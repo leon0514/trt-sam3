@@ -89,6 +89,7 @@ bool Sam3Infer::load_engines()
             std::cerr << "Failed to load " << name << " from " << path << std::endl;
             return false;
         }
+        engine->print(path.c_str());
         if (isdynamic_model_)
             isdynamic_model_ = engine->has_dynamic_dim();
         return true;

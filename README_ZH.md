@@ -1,53 +1,54 @@
 [English](README.md) | [中文](README_ZH.md)
 
-# TensorRT SAM3 (C++ Inference)
+# TensorRT SAM3 (C++ 推理)
 
-This is a TensorRT-based SAM3 inference repository (C++ implementation). It currently implements image preprocessing, image encoding, text encoding, decoder decoding, and post-processing processes, supporting multi-text prompt inference for images.
+这是一个基于 TensorRT 的 SAM3 推理仓库（C++ 实现）。目前实现了图像预处理、图像编码、文本编码、decoder 解码和后处理流程，支持图片多文本提示的推理流程。
 
-## Key Features:
-- Uses TensorRT engine
-- C++ + CUDA implementation of preprocessing/post-processing kernels, suitable for efficient GPU operation
-- Supports mask/box output based on text prompts and geometric bounding boxes
-- Utilizes batching and memory reuse to simultaneously recognize multiple text prompt categories
-- Draw boxes on image A, recognize on image B
+## 主要特点：
+- 使用 TensorRT 引擎
+- C++ + CUDA 实现预处理/后处理内核，适合在 GPU 上高效运行
+- 支持基于文本提示和几何矩形框的 mask/box 输出
+- 利用批处理和内存复用实现同时识别多个文本提示类别
+- 在A图上画框，在B图上识别
 
-## ONNX Model and TensorRT Model Export
-- Refer to the repository below to export ONNX models  
+## ONNX 模型以及 TensorRT 模型导出
+- 参考下面的仓库导出onnx模型  
 [https://github.com/jamjamjon/usls.git](https://github.com/jamjamjon/usls.git)
 
-- Address of already exported ONNX models    
+- 已经导出的 onnx 模型地址    
 [https://huggingface.co/tangliyang/onnx_model_store](https://huggingface.co/tangliyang/onnx_model_store)
 
-## Vision Encode Model Quantization
-- Refer to the repository below to perform int8 quantization on the SAM3 vision encode model
+
+## Vision Encode 模型量化
+- 参考下面的仓库对sam3 vision encode模型进行int8量化
 [https://github.com/NVIDIA/Model-Optimizer/tree/main/examples/windows/onnx_ptq/sam2](https://github.com/NVIDIA/Model-Optimizer/tree/main/examples/windows/onnx_ptq/sam2)
 
-## Environment
-- Server    
+## 环境
+- 服务器    
 ubuntu 24.04
-- GPU
+- 显卡
 NVIDIA GeForce RTX 4090
-- Image  
+- 镜像  
 nvcr.io/nvidia/tensorrt:25.10-py3
 
-## Recognition Results
-- Multi-word Text Prompts
-Can simultaneously recognize multiple categories
+## 识别效果
+- 多单词 文本提示
+可以同时识别多个类别
 <div align="center">
    <img src="https://raw.githubusercontent.com/leon0514/trt-sam3/refs/heads/main/workspace/assert/demo_multi_class.jpg" width="80%"/>
 </div>
 
-- Geometric Prompts
+- 几何提示
 <div align="center">
    <img src="https://raw.githubusercontent.com/leon0514/trt-sam3/refs/heads/main/workspace/assert/demo_box.jpg" width="80%"/>
 </div>
 
-- Mixed Prompts
+- 混合提示
 <div align="center">
    <img src="https://raw.githubusercontent.com/leon0514/trt-sam3/refs/heads/main/workspace/assert/demo_mixed.jpg" width="80%"/>
 </div>
 
-- Prompt boxes on image A, recognition on image B
+- 提示框在A图片，识别在B图片
 <div align="center">
    <img src="https://raw.githubusercontent.com/leon0514/trt-sam3/refs/heads/main/workspace/assert/A.jpg" width="80%"/>
 </div>
@@ -56,16 +57,16 @@ Can simultaneously recognize multiple categories
    <img src="https://raw.githubusercontent.com/leon0514/trt-sam3/refs/heads/main/workspace/assert/B.jpg" width="80%"/>
 </div>
 
-## Speed
-Around `50ms`
+## 速度
+`50ms`左右
 
-## Build and Run
+## 编译执行
 ```bash
 cmake .. -DCMAKE_PREFIX_PATH="$(python3 -m pybind11 --cmakedir)"
 make -j$(nproc)
 ```
 
-## Manually Specify TensorRT
+## 手动指定TensorRT
 ```shell
 cmake .. -DTENSORRT_INCLUDE_DIRS=/opt/nvidia/TensorRT-10.13.0.35/include \
 -DNVINFER_LIBRARY=/opt/nvidia/TensorRT-10.13.0.35/targets/x86_64-linux-gnu/lib/ \
@@ -73,8 +74,8 @@ cmake .. -DTENSORRT_INCLUDE_DIRS=/opt/nvidia/TensorRT-10.13.0.35/include \
 -DNVONNXPARSER_LIBRARY=/opt/nvidia/TensorRT-10.13.0.35/targets/x86_64-linux-gnu/lib/
 ```
 
-## References
+## 引用
 [https://github.com/jamjamjon/usls.git](https://github.com/jamjamjon/usls.git)
 
-## License and Contributions
-- This repository is an example for personal/research use, welcome issues.
+## 许可与贡献
+- 本仓库为个人/研究用途示例，欢迎 issue。

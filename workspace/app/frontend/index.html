@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TRTSAM3 PRO | 混合提示工作站</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="logo">TRT<span>SAM3</span></div>
+            </div>
+            
+            <div class="panel-scroll">
+                <div class="config-item">
+                    <label class="item-label">1. 分析模式</label>
+                    <select id="mode-select" class="styled-select">
+                        <option value="multi-class">多类别文本提示</option>
+                        <option value="box">手动点/框提示</option>
+                        <option value="mixed">混合模式提示</option>
+                        <option value="from-image" selected>跨图参考提示</option>
+                    </select>
+                </div>
+
+                <div class="config-item">
+                    <label class="item-label">2. 目标图预览 (支持标注)</label>
+                    <div class="thumb-card" id="target-thumb-box">
+                        <canvas id="target-thumb-canvas"></canvas>
+                        <div class="upload-mask" id="target-mask"><span>+</span> 点击上传目标图</div>
+                        <input type="file" id="target-file" hidden accept="image/*">
+                    </div>
+                </div>
+
+                <div class="config-item" id="section-prompt-img">
+                    <label class="item-label">3. 参考提示图</label>
+                    <div class="thumb-card" id="prompt-thumb-box">
+                        <canvas id="prompt-thumb-canvas"></canvas>
+                        <div class="upload-mask" id="prompt-mask"><span>🖼️</span> 点击上传参考图</div>
+                        <input type="file" id="prompt-file" hidden accept="image/*">
+                    </div>
+                </div>
+
+                <div class="config-item" id="section-text-prompt">
+                    <label class="item-label">4. 文本类别设定</label>
+                    <div id="text-container" class="prompt-stack"></div>
+                    <button id="add-text-btn" class="secondary-btn">+ 添加新类别</button>
+                </div>
+            </div>
+
+            <div class="sidebar-footer">
+                <button id="run-btn" class="primary-btn">推理</button>
+            </div>
+        </aside>
+
+        <main class="viewer">
+            <header class="viewer-head">
+                <span class="view-title">处理预览</span>
+                <button id="dl-link" class="download-btn hidden">保存结果</button>
+            </header>
+            <div class="stage">
+                <div id="loader" class="loader hidden">
+                    <div class="spinner"></div>
+                    <p>AI 推理中...</p>
+                </div>
+                <div id="placeholder" class="placeholder">请上传图片并配置提示</div>
+                <div class="result-wrap">
+                    <img id="res-img" class="hidden">
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div id="editor-modal" class="modal hidden">
+        <div class="modal-nav">
+            <div class="nav-left">标注校准控制台</div>
+            <div class="nav-center">
+                <div class="seg-switcher">
+                    <input type="radio" name="pt" value="pos" id="pos" checked>
+                    <label for="pos">正向</label>
+                    <input type="radio" name="pt" value="neg" id="neg">
+                    <label for="neg">负向</label>
+                    <div class="seg-bg"></div>
+                </div>
+            </div>
+            <div class="nav-right">
+                <button id="undo-draw" class="action-btn undo">撤销上一个</button>
+                <button id="clear-draw" class="action-btn clear">清空全部</button>
+                <button id="close-editor" class="action-btn confirm">保存并返回</button>
+            </div>
+        </div>
+        <div class="modal-body">
+            <div class="canvas-container">
+                <canvas id="editor-canvas"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>

@@ -46,3 +46,8 @@ workspace/*
 !workspace/font/
 !workspace/script/
 !workspace/script/*.sh
+workspace/app/engine-models
+workspace/app/outputs
+workspace/app/uploads
+workspace/app/__pycache__
+!workspace/app

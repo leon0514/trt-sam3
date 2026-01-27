@@ -65,13 +65,10 @@ cmake .. -DCMAKE_PREFIX_PATH="$(python3 -m pybind11 --cmakedir)"
 make -j$(nproc)
 ```
 
-## Manually Specify TensorRT
-```shell
-cmake .. -DTENSORRT_INCLUDE_DIRS=/opt/nvidia/TensorRT-10.13.0.35/include \
--DNVINFER_LIBRARY=/opt/nvidia/TensorRT-10.13.0.35/targets/x86_64-linux-gnu/lib/ \
--DNVINFER_PLUGIN_LIBRARY=/opt/nvidia/TensorRT-10.13.0.35/targets/x86_64-linux-gnu/lib/ \
--DNVONNXPARSER_LIBRARY=/opt/nvidia/TensorRT-10.13.0.35/targets/x86_64-linux-gnu/lib/
-```
+## web UI
+<div align="center">
+   <img src="https://raw.githubusercontent.com/leon0514/trt-sam3/refs/heads/main/workspace/assert/web.jpg" width="80%"/>
+</div>
 
 ## References
 [https://github.com/jamjamjon/usls.git](https://github.com/jamjamjon/usls.git)

@@ -69,7 +69,7 @@ make -j$(nproc)
 
 ## web 界面
 <div align="center">
-   <img src="https://raw.githubusercontent.com/leon0514/trt-sam3/refs/heads/main/workspace/assert/web.jpg" width="80%"/>
+   <img src="https://raw.githubusercontent.com/leon0514/trt-sam3/refs/heads/main/workspace/assert/web.png" width="80%"/>
 </div>
 
 ## 引用

@@ -1,185 +1,142 @@
 import requests
 import base64
+import json
+import time
+import os
 import cv2
 import numpy as np
-import json
-import random
-import os
 
-# 服务地址
-SERVER_URL = "http://172.16.20.193:18002/predict"
-OUTPUT_DIR = "client_output"
-
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-def rle_to_opencv_mask(rle_dict):
-    """
-    核心函数：将 RLE 字典转换为 OpenCV (numpy) 二值掩码
-    
-    Args:
-        rle_dict: {'size': [h, w], 'counts': [c1, c2, ...]}
-    Returns:
-        mask: numpy array of shape (h, w), dtype=uint8 (0 or 255)
-    """
-    h, w = rle_dict['size']
-    counts = rle_dict['counts']
-    
-    # 1. 创建扁平数组
-    total_pixels = h * w
-    mask_flat = np.zeros(total_pixels, dtype=np.uint8)
-    
-    # 2. 填充像素
-    # 假设 counts 格式为 [背景数, 前景数, 背景数, 前景数...]
-    # 如果第一个像素是前景，服务端通常会在 counts 开头补 0
-    current_pos = 0
-    val = 0 # 0 表示背景，1 表示前景
-    
-    for count in counts:
-        if val == 1:
-            # 只有当前是前景时才赋值
-            mask_flat[current_pos : current_pos + count] = 1
-        current_pos += count
-        val = 1 - val # 切换状态
-        
-    # 3. 重塑回图像尺寸
-    # 注意：服务端使用的是 flatten(order='F') (列优先)，所以这里也要用 order='F'
-    mask = mask_flat.reshape((h, w), order='F')
-    
-    return mask * 255 # 转换为 0-255 方便 OpenCV 显示
-
-def get_random_color(tag):
-    random.seed(hash(tag))
-    return (random.randint(50, 255), random.randint(50, 255), random.randint(50, 255))
-
-def visualize(image, results, save_name="result.jpg"):
-    """
-    可视化结果 (适配 Box-based Mask)
-    """
-    if image is None: return
-    vis_img = image.copy()
-    print(f"Detected {len(results)} objects.")
-
-    for obj in results:
-        label = obj['label']
-        score = obj['score']
-        box = obj['box'] # [x1, y1, x2, y2]
-        rle = obj.get('mask')
-        
-        # 生成随机颜色
-        color = get_random_color(label)
-        
-        # 1. 绘制 Box
-        x1, y1, x2, y2 = map(int, box)
-        
-        # 边界检查，防止坐标超出图像范围
-        h_img, w_img = vis_img.shape[:2]
-        x1 = max(0, min(x1, w_img))
-        y1 = max(0, min(y1, h_img))
-        x2 = max(0, min(x2, w_img))
-        y2 = max(0, min(y2, h_img))
-        
-        cv2.rectangle(vis_img, (x1, y1), (x2, y2), color, 2)
-        
-        # 2. 绘制 Mask (关键修改点)
-        if rle:
-            # 解码 Mask (此时得到的 mask_cv 是 Box 大小的，比如 91x50)
-            mask_cv = rle_to_opencv_mask(rle)
-            
-            # 计算 Box 的宽高
-            box_w = x2 - x1
-            box_h = y2 - y1
-            
-            # 只有当 Box 有效时才绘制
-            if box_w > 0 and box_h > 0:
-                # 尺寸容错：由于 float->int 转换误差，C++返回的mask尺寸可能和Python切片尺寸差1-2像素
-                # 强制 resize mask 到 Python 切片的大小
-                if mask_cv.shape[0] != box_h or mask_cv.shape[1] != box_w:
-                    mask_cv = cv2.resize(mask_cv, (box_w, box_h), interpolation=cv2.INTER_NEAREST)
-                
-                # 提取原图的 ROI (Region of Interest)
-                roi = vis_img[y1:y2, x1:x2]
-                
-                # 创建彩色遮罩层
-                colored_mask = np.zeros_like(roi)
-                colored_mask[:] = color
-                
-                # 找到前景区域
-                mask_indices = mask_cv > 0
-                
-                # 仅在 ROI 内进行半透明叠加
-                # 错误修正：这里 mask_indices 和 roi 的维度现在完全匹配了
-                alpha = 0.5
-                roi[mask_indices] = cv2.addWeighted(
-                    roi[mask_indices], 1 - alpha, 
-                    colored_mask[mask_indices], alpha, 0
-                )
-                
-                # 将处理后的 ROI 放回原图
-                vis_img[y1:y2, x1:x2] = roi
-
-        # 3. 绘制标签
-        text = f"{label}: {score:.2f}"
-        cv2.putText(vis_img, text, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-
-    save_path = os.path.join(OUTPUT_DIR, save_name)
-    cv2.imwrite(save_path, vis_img)
-    print(f"Result saved to {save_path}")
-
-def run_inference(image_path, prompts, return_mask=True):
-    # 1. 读取图片并转 Base64
-    if not os.path.exists(image_path):
-        print(f"Error: Image {image_path} not found.")
-        return
-
-    with open(image_path, "rb") as f:
-        img_b64 = base64.b64encode(f.read()).decode('utf-8')
-
-    # 2. 构造请求 Payload
-    payload = {
-        "image_base64": img_b64,
-        "prompts": prompts,
-        "return_mask": return_mask
-    }
-
-    # 3. 发送请求
-    try:
-        print(f"Sending request for {image_path} ...")
-        resp = requests.post(SERVER_URL, json=payload)
-        
-        if resp.status_code == 200:
-            data = resp.json()
-            results = data['results']
-            img = cv2.imread(image_path)
-            visualize(img, results, save_name="client_" + os.path.basename(image_path))
-        else:
-            print(f"Request failed: {resp.status_code}")
-            print(resp.text)
-
-    except Exception as e:
-        print(f"Error connecting to server: {e}")
-
-if __name__ == "__main__":
-    # 场景 A: 多文本提示 (Multi-Class)
-    # 同时检测人、眼镜、汽车
-    img_path = "../images/persons.jpg" # 请确保图片存在
-    prompts_a = [
-        {"text": "hat"},
-    ]
-    run_inference(img_path, prompts_a, return_mask=True)
-
-    # 场景 B: 混合提示 (文本 + 框)
-    # 检测 mask，同时强制分割某个区域
-    img_path_b = "../images/smx.jpg" # 请确保图片存在
-    prompts_b = [
-        {
-            "text": "helmet"
-        },
-        {
-            "text": "", # 空文本，只用框
-            "boxes": [
-                # 这里的坐标需要根据你的图片实际情况修改
-                {"label": "pos", "bbox": [100, 100, 400, 500]} 
-            ]
+class TRTSAMClient:
+    def __init__(self, host="172.16.20.193", port=18001):
+        self.base_url = f"http://{host}:{port}"
+        self.headers = {
+            "accept": "application/json",
+            "Content-Type": "application/json"
         }
+
+    def _img_to_b64(self, image_path):
+        """将本地图片转为 base64 字符串"""
+        if not os.path.exists(image_path):
+            raise FileNotFoundError(f"未找到图片文件: {image_path}")
+        with open(image_path, "rb") as f:
+            return base64.b64encode(f.read()).decode('utf-8')
+
+    def rle_to_opencv_mask(self, rle_dict):
+        """还原 RLE 格式的 Mask (Fortran order)"""
+        h, w = rle_dict['size']
+        counts = rle_dict['counts']
+        total_pixels = h * w
+        mask_flat = np.zeros(total_pixels, dtype=np.uint8)
+        
+        current_pos = 0
+        val = 0 
+        for count in counts:
+            if val == 1:
+                mask_flat[current_pos : current_pos + count] = 1
+            current_pos += count
+            val = 1 - val 
+            
+        mask = mask_flat.reshape((h, w), order='F')
+        return mask * 255
+
+    def infer(self, endpoint, image_path, prompts, conf=0.5, mask=False):
+        """
+        发送推理请求
+        :param endpoint: API 后缀，如 '/predict'
+        :param prompts: List[dict], 例如 [{"text": "person", "boxes": []}, {"text": "bag", "boxes": []}]
+        :param conf: 置信度阈值
+        :param mask: 是否返回掩码
+        """
+        url = f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+        
+        payload = {
+            "image_base64": self._img_to_b64(image_path),
+            "confidence_threshold": conf,
+            "prompts": prompts, # 直接透传 prompts 列表
+            "return_mask": mask
+        }
+
+        try:
+            start_time = time.time()
+            response = requests.post(url, headers=self.headers, json=payload, timeout=60)
+            elapsed = time.time() - start_time
+
+            if response.status_code == 200:
+                res = response.json()
+                # 打印原始结果以便调试
+                print(f"[{endpoint}] 耗时: {elapsed:.2f}s | 结果数: {len(res.get('results', []))}")
+                return res
+            else:
+                print(f"请求失败: {response.status_code} - {response.text}")
+                return None
+        except Exception as e:
+            print(f"网络异常: {e}")
+            return None
+
+    def visualize(self, image_path, result, save_name="vis_result.jpg"):
+        """可视化检测框和局部 Mask"""
+        objects = result.get('results', [])
+        img = cv2.imread(image_path)
+        if img is None: return
+        
+        h_img, w_img = img.shape[:2]
+        mask_overlay = img.copy()
+        
+        for obj in objects:
+            # 1. 绘制矩形框
+            box = obj.get('box', [])
+            if len(box) == 4:
+                x1, y1, x2, y2 = map(int, box)
+                # 限制坐标在图像范围内
+                x1, y1 = max(0, x1), max(0, y1)
+                x2, y2 = min(w_img, x2), min(h_img, y2)
+                
+                cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                label_str = f"{obj.get('label', 'obj')} {obj.get('score', 0):.2f}"
+                cv2.putText(img, label_str, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+                # 2. 处理 Mask (局部 ROI 贴图)
+                rle = obj.get('mask')
+                if rle:
+                    binary_mask = self.rle_to_opencv_mask(rle)
+                    m_h, m_w = binary_mask.shape
+                    
+                    # 后端返回的局部 Mask 对应的实际区域
+                    t_y2 = min(y1 + m_h, h_img)
+                    t_x2 = min(x1 + m_w, w_img)
+                    
+                    # 确保切片大小一致
+                    roi = mask_overlay[y1:t_y2, x1:t_x2]
+                    cut_m = binary_mask[0:(t_y2-y1), 0:(t_x2-x1)]
+                    
+                    color = [np.random.randint(100, 255) for _ in range(3)]
+                    roi[cut_m > 0] = color
+        
+        final = cv2.addWeighted(mask_overlay, 0.5, img, 0.5, 0)
+        cv2.imwrite(save_name, final)
+        print(f"结果已保存至: {save_name}")
+
+# ==========================================
+# 运行示例
+# ==========================================
+if __name__ == "__main__":
+    client = TRTSAMClient()
+    
+    # 定义多个 Prompt
+    my_prompts = [
+        {"text": "person", "boxes": []},
+        {"text": "cigarette", "boxes": []},
     ]
-    run_inference(img_path_b, prompts_b, return_mask=True)
+    
+    img_path = "../images/smoke.jpg"
+    
+    res = client.infer(
+        endpoint="/predict-person-about-small-object", 
+        image_path=img_path,
+        prompts=my_prompts, # 传入列表
+        conf=0.4,
+        mask=True
+    )
+    
+    if res:
+        client.visualize(img_path, res, "output_multi_prompt.jpg")

@@ -110,8 +110,8 @@ def inference_with_person_refine(image: np.ndarray, refine_texts: List[str], thr
         ])
         
         cropped_img = image[y1:y2, x1:x2]
-        uuid_str = uuid.uuid4().hex[:8]
-        cv2.imwrite(f"{uuid_str}_debug_crop.jpg", cropped_img)  # 调试用
+        # uuid_str = uuid.uuid4().hex[:8]
+        # cv2.imwrite(f"{uuid_str}_debug_crop.jpg", cropped_img)  # 调试用
 
         if cropped_img.size == 0:
             continue
@@ -146,10 +146,10 @@ def run_multi_class_prompt(image_path: str, prompts: List[str], confidence_thres
     results = inference_with_multi_class_prompt(image, prompts, confidence_threshold, return_results)
     return draw_and_save_image(image, results, "multi_class_prompt")
 
-def run_mixed_prompt(image_path: str, text_prompt: str, boxes: List[dict]) -> Optional[str]:
+def run_mixed_prompt(image_path: str, text_prompt: str, boxes: List[dict], confidence_threshold: float = 0.5, return_results: bool = True) -> Optional[str]:
     image = cv2.imread(image_path)
     if image is None: return None
-    results = inference_with_mixed_prompt(image, text_prompt, boxes)
+    results = inference_with_mixed_prompt(image, text_prompt, boxes, confidence_threshold, return_results)
     return draw_and_save_image(image, results, "mixed_prompt")
 
 def run_from_image_prompt(target_image_path: str, prompt_image_path: str, boxes: List[dict], confidence_threshold: float = 0.5, return_results: bool = True) -> Optional[str]:

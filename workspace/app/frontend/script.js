@@ -41,28 +41,47 @@ document.addEventListener('DOMContentLoaded', () => {
     ['target', 'prompt'].forEach(key => {
         const box = document.getElementById(`${key}-thumb-box`);
         const input = document.getElementById(`${key}-file`);
+        const reBtn = document.getElementById(`re-${key}`); // 获取重传按钮
         
-        box.onclick = () => {
-            const mode = modeSelect.value;
-            // 关键修复：允许文本提示模式下上传图片，同时在混合/框选模式下进入标注
-            if (mode === 'multi-class' && key === 'target') {
+        // 点击逻辑分流
+        box.onclick = (e) => {
+            // 如果点击的是“重新上传”按钮，触发文件选择
+            if (e.target === reBtn) {
+                input.value = ''; // 关键修复 1：清空 value 确保触发 change
                 input.click();
+                return;
+            }
+
+            const mode = modeSelect.value;
+            // 如果已经有图片，且当前模式支持标注，则进入编辑器
+            if (state[key].file && mode !== 'multi-class') {
+                openEditor(key);
             } else {
-                state[key].file ? openEditor(key) : input.click();
+                // 否则（没图或者是文本模式），触发文件选择
+                input.value = ''; // 关键修复 1
+                input.click();
             }
         };
 
         input.onchange = (e) => {
-            const file = e.target.files[0]; if(!file) return;
+            const file = e.target.files[0]; 
+            if(!file) return;
+
             state[key].file = file;
+            // 关键修复 2：重新上传时清空旧的标注框，防止坐标错位
+            state[key].boxes = []; 
+            
             const reader = new FileReader();
             reader.onload = (ev) => {
+                state[key].img.onload = () => {
+                    drawThumb(key);
+                    // 上传成功后，如果是重传，需要确保预览遮罩隐藏
+                    document.getElementById(`${key}-mask`).classList.add('hidden');
+                };
                 state[key].img.src = ev.target.result;
-                document.getElementById(`${key}-mask`).classList.add('hidden');
             };
             reader.readAsDataURL(file);
         };
-        state[key].img.onload = () => drawThumb(key);
     });
 
     // 3. 标注编辑器控制
@@ -146,46 +165,86 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 4. 提交任务 (混合提示逻辑)
+    const confRange = document.getElementById('conf-range');
+    const confVal = document.getElementById('conf-val');
+    confRange.oninput = () => {
+        confVal.innerText = parseFloat(confRange.value).toFixed(2);
+    };
+
+    // 2. 更新 run-btn 的点击事件处理逻辑
     document.getElementById('run-btn').onclick = async () => {
         if(!state.target.file) return alert("请上传目标图像");
+        
         const loader = document.getElementById('loader');
         const imgOut = document.getElementById('res-img');
-        loader.classList.remove('hidden'); imgOut.classList.add('hidden');
+        const dlLink = document.getElementById('dl-link');
+        const placeholder = document.getElementById('placeholder');
+        const maskEnable = document.getElementById('mask-enable').checked; // 获取 mask 开关状态
+
+        loader.classList.remove('hidden'); 
+        imgOut.classList.add('hidden');
+        dlLink.classList.add('hidden');
 
         const fd = new FormData();
         const mode = modeSelect.value;
+        let apiEndpoint = (mode === 'person-refine') ? '/process-person-refine' : '/process-image';
+        
+        // --- 注入通用参数 ---
         fd.append('mode', mode);
         fd.append('target_image', state.target.file);
-        
-        // 核心：处理混合逻辑
+        fd.append('confidence_threshold', confRange.value); // 注入置信度
+        fd.append('return_mask', maskEnable);               // 注入是否开启 mask
+
+        const texts = Array.from(document.querySelectorAll('.prompt-val'))
+                        .map(i => i.value.trim())
+                        .filter(v => v)
+                        .join(',');
+
         if (mode === 'from-image') {
+            if (!state.prompt.file) {
+                loader.classList.add('hidden');
+                return alert("跨图模式请上传参考图");
+            }
             fd.append('prompt_image', state.prompt.file);
             fd.append('prompt_boxes', JSON.stringify(state.prompt.boxes));
         } else {
-            // multi-class, box, mixed 都会走到这里
-            const texts = Array.from(document.querySelectorAll('.prompt-val')).map(i=>i.value).filter(v=>v).join(',');
             if (texts) fd.append('text_prompts', texts);
-            
-            // box 和 mixed 模式下，target 上的框非常重要
-            if(state.target.boxes.length) {
+            if (state.target.boxes.length > 0) {
                 fd.append('target_boxes', JSON.stringify(state.target.boxes));
             }
         }
 
         try {
-            const r = await fetch('/process-image', { method: 'POST', body: fd });
+            const r = await fetch(apiEndpoint, { 
+                method: 'POST', 
+                body: fd 
+            });
+
+            if (!r.ok) {
+                const errText = await r.text();
+                throw new Error(errText || "服务器推理出错");
+            }
+
             const blob = await r.blob();
             const url = URL.createObjectURL(blob);
+            
             imgOut.src = url;
             imgOut.classList.remove('hidden');
-            document.getElementById('dl-link').classList.remove('hidden');
-            document.getElementById('dl-link').onclick = () => {
-                const a = document.createElement('a'); a.href = url; a.download = 'result.png'; a.click();
+            placeholder.classList.add('hidden');
+            dlLink.classList.remove('hidden');
+            
+            dlLink.onclick = () => {
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `trt_sam3_${mode}_${Date.now()}.jpg`;
+                a.click();
             };
-            document.getElementById('placeholder').classList.add('hidden');
-        } catch (e) { alert("推理失败"); }
-        finally { loader.classList.add('hidden'); }
+        } catch (e) {
+            console.error(e);
+            alert("推理失败: " + e.message);
+        } finally {
+            loader.classList.add('hidden');
+        }
     };
 
     modeSelect.dispatchEvent(new Event('change'));

@@ -214,7 +214,7 @@ void osd(cv::Mat &img, const object::DetectionBoxArray &boxes, bool osd_rect, do
         drawObbBox(img, box, thickness);
 
         // 添加文字任务
-        if (osd_rect && (box.box.bottom - box.box.top) > 5) {
+        if (osd_rect && (box.box.bottom - box.box.top) >= 1) {
             std::string text;
             if (box.type == object::ObjectType::POSITION) text = box.class_name;
             else {

@@ -15,35 +15,54 @@
             
             <div class="panel-scroll">
                 <div class="config-item">
-                    <label class="item-label">1. 分析模式</label>
+                    <label class="item-label">分析模式</label>
                     <select id="mode-select" class="styled-select">
                         <option value="multi-class">多类别文本提示</option>
                         <option value="box">手动点/框提示</option>
                         <option value="mixed">混合模式提示</option>
-                        <option value="from-image" selected>跨图参考提示</option>
+                        <option value="from-image">跨图参考提示</option>
+                        <option value="person-refine">人员关联小目标 (Refine)</option> 
                     </select>
                 </div>
 
                 <div class="config-item">
-                    <label class="item-label">2. 目标图预览 (支持标注)</label>
+                    <label class="item-label">推理配置</label>
+                    <div class="setting-row">
+                        <span>置信度</span>
+                        <input type="range" id="conf-range" min="0.1" max="0.95" step="0.05" value="0.5">
+                        <b id="conf-val">0.50</b>
+                    </div>
+                    <div class="setting-row" style="margin-top: 15px;">
+                        <span>开启分割 (Mask)</span>
+                        <label class="switch">
+                            <input type="checkbox" id="mask-enable" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="config-item">
+                    <label class="item-label">目标图预览 (支持标注)</label>
                     <div class="thumb-card" id="target-thumb-box">
                         <canvas id="target-thumb-canvas"></canvas>
+                        <div class="re-upload-btn" id="re-target">重新上传</div> <canvas id="target-thumb-canvas"></canvas>
                         <div class="upload-mask" id="target-mask"><span>+</span> 点击上传目标图</div>
                         <input type="file" id="target-file" hidden accept="image/*">
                     </div>
                 </div>
 
                 <div class="config-item" id="section-prompt-img">
-                    <label class="item-label">3. 参考提示图</label>
+                    <label class="item-label">参考提示图</label>
                     <div class="thumb-card" id="prompt-thumb-box">
                         <canvas id="prompt-thumb-canvas"></canvas>
+                        <div class="re-upload-btn" id="re-prompt">重新上传</div> <canvas id="prompt-thumb-canvas"></canvas>
                         <div class="upload-mask" id="prompt-mask"><span>🖼️</span> 点击上传参考图</div>
                         <input type="file" id="prompt-file" hidden accept="image/*">
                     </div>
                 </div>
 
                 <div class="config-item" id="section-text-prompt">
-                    <label class="item-label">4. 文本类别设定</label>
+                    <label class="item-label">文本类别设定</label>
                     <div id="text-container" class="prompt-stack"></div>
                     <button id="add-text-btn" class="secondary-btn">+ 添加新类别</button>
                 </div>

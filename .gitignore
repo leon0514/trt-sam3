@@ -50,4 +50,5 @@ workspace/app/engine-models
 workspace/app/outputs
 workspace/app/uploads
 workspace/app/__pycache__
+workspace/app/logs
 !workspace/app

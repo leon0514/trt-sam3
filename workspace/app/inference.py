@@ -10,11 +10,11 @@ from utils import merge_person_boxes
 
 
 # --- 配置路径 ---
-VISION_MODEL = "engine-models/vision-encoder.engine"
-TEXT_MODEL = "engine-models/text-encoder.engine"
-DECODER_MODEL = "engine-models/decoder.engine"
-GEOMETRY_MODEL = "engine-models/geometry-encoder.engine"
-TOKENIZER_PATH = "engine-models/tokenizer.json"
+VISION_MODEL = "../engine-models/vision-encoder.engine"
+TEXT_MODEL = "../engine-models/text-encoder.engine"
+DECODER_MODEL = "../engine-models/decoder.engine"
+GEOMETRY_MODEL = "../engine-models/geometry-encoder.engine"
+TOKENIZER_PATH = "../engine-models/tokenizer.json"
 OUTPUT_DIR = "outputs"
 UPLOADS_DIR = "uploads"
 

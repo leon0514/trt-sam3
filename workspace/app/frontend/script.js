@@ -1,4 +1,5 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // 状态管理
     const state = {
         target: { img: new Image(), boxes: [], file: null },
         prompt: { img: new Image(), boxes: [], file: null },
@@ -8,90 +9,122 @@ document.addEventListener('DOMContentLoaded', () => {
     const modeSelect = document.getElementById('mode-select');
     const sectionPromptImg = document.getElementById('section-prompt-img');
     const sectionTextPrompt = document.getElementById('section-text-prompt');
-    const targetThumbBox = document.getElementById('target-thumb-box');
 
-    // 1. 核心模式切换逻辑 (混合模式处理)
+    // 1. 模式切换逻辑
     modeSelect.onchange = () => {
         const mode = modeSelect.value;
-        
-        // 参考图区域：仅跨图参考模式显示
         sectionPromptImg.classList.toggle('hidden', mode !== 'from-image');
-        
-        // 文本提示区域：文本模式 和 混合模式 都显示
         sectionTextPrompt.classList.toggle('hidden', mode === 'from-image');
-
-        // 目标图点击逻辑：
-        // 文本模式 (multi-class) -> 仅上传
-        // 标注模式 (box) / 混合模式 (mixed) -> 上传并进入标注
-        targetThumbBox.style.opacity = "1"; 
     };
 
+    // 2. 文本类别管理
     const textContainer = document.getElementById('text-container');
     function addTextInput(val = '') {
         const div = document.createElement('div');
         div.className = 'text-item';
-        div.innerHTML = `<input type="text" class="prompt-val" value="${val}"><button class="del-btn">&times;</button>`;
+        div.innerHTML = `
+            <input type="text" class="prompt-val" value="${val}" placeholder="输入类别名称...">
+            <button class="del-btn">&times;</button>
+        `;
         div.querySelector('.del-btn').onclick = () => div.remove();
         textContainer.appendChild(div);
     }
     document.getElementById('add-text-btn').onclick = () => addTextInput();
     addTextInput('person');
 
-    // 2. 图片上传与标注入口
+    // 3. 核心：图片上传与标注入口隔离修复
     ['target', 'prompt'].forEach(key => {
         const box = document.getElementById(`${key}-thumb-box`);
         const input = document.getElementById(`${key}-file`);
-        const reBtn = document.getElementById(`re-${key}`); // 获取重传按钮
-        
-        // 点击逻辑分流
-        box.onclick = (e) => {
-            // 如果点击的是“重新上传”按钮，触发文件选择
-            if (e.target === reBtn) {
-                input.value = ''; // 关键修复 1：清空 value 确保触发 change
-                input.click();
+        const reBtn = document.getElementById(`re-${key}`);
+        const mask = document.getElementById(`${key}-mask`);
+
+        // A. 单独处理"重新上传"按钮 - 完全独立逻辑
+        reBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            
+            // 直接清空当前图片状态
+            state[key].file = null;
+            state[key].boxes = [];
+            
+            // 隐藏重新上传按钮
+            reBtn.style.display = 'none';
+            
+            // 显示上传蒙版
+            mask.classList.remove('hidden');
+            
+            // 立即触发文件选择
+            input.value = '';
+            input.click();
+        });
+
+        // B. 图片容器点击逻辑 - 只处理没有文件时的情况
+        box.addEventListener('click', (e) => {
+            // 如果点击的是"重新上传"按钮，已经处理过了，直接返回
+            if (e.target.closest('.re-upload-btn')) {
                 return;
             }
-
-            const mode = modeSelect.value;
-            // 如果已经有图片，且当前模式支持标注，则进入编辑器
-            if (state[key].file && mode !== 'multi-class') {
+            
+            // 如果有文件，打开编辑器
+            if (state[key].file) {
                 openEditor(key);
-            } else {
-                // 否则（没图或者是文本模式），触发文件选择
-                input.value = ''; // 关键修复 1
+            } 
+            // 如果没有文件，触发上传（但这里不应该发生，因为蒙版会覆盖整个区域）
+            else {
+                // 为了安全起见，也触发上传
                 input.click();
             }
-        };
+        });
 
+        // C. 文件选择后的处理
         input.onchange = (e) => {
             const file = e.target.files[0]; 
-            if(!file) return;
+            if (!file) return;
 
+            // 更新状态
             state[key].file = file;
-            // 关键修复 2：重新上传时清空旧的标注框，防止坐标错位
-            state[key].boxes = []; 
+            state[key].boxes = [];
             
+            // 创建图片对象
+            const img = new Image();
+            img.onload = () => {
+                // 更新状态中的图片引用
+                state[key].img = img;
+                
+                // 绘制缩略图
+                drawThumb(key);
+                
+                // 隐藏上传蒙版
+                mask.classList.add('hidden');
+                
+                // 显示重新上传按钮
+                reBtn.style.display = 'block';
+            };
+            
+            // 读取文件
             const reader = new FileReader();
             reader.onload = (ev) => {
-                state[key].img.onload = () => {
-                    drawThumb(key);
-                    // 上传成功后，如果是重传，需要确保预览遮罩隐藏
-                    document.getElementById(`${key}-mask`).classList.add('hidden');
-                };
-                state[key].img.src = ev.target.result;
+                img.src = ev.target.result;
             };
             reader.readAsDataURL(file);
         };
     });
 
-    // 3. 标注编辑器控制
+    // 4. 标注编辑器逻辑
     const eCanvas = document.getElementById('editor-canvas');
     const eCtx = eCanvas.getContext('2d');
 
     function openEditor(key) {
         state.activeKey = key;
-        document.getElementById('editor-modal').classList.remove('hidden');
-        const ratio = Math.min(window.innerWidth*0.85/state[key].img.naturalWidth, window.innerHeight*0.8/state[key].img.naturalHeight, 1);
+        const modal = document.getElementById('editor-modal');
+        modal.classList.remove('hidden');
+        
+        const ratio = Math.min(
+            (window.innerWidth * 0.85) / state[key].img.naturalWidth, 
+            (window.innerHeight * 0.8) / state[key].img.naturalHeight, 
+            1
+        );
         eCanvas.width = state[key].img.naturalWidth * ratio;
         eCanvas.height = state[key].img.naturalHeight * ratio;
         renderEditor();
@@ -106,7 +139,10 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     let drawing = false, startPos = {};
-    eCanvas.onmousedown = (e) => { drawing = true; startPos = getPos(e); };
+    eCanvas.onmousedown = (e) => { 
+        drawing = true; 
+        startPos = getPos(e); 
+    };
     eCanvas.onmousemove = (e) => {
         if(!drawing) return;
         renderEditor();
@@ -114,9 +150,10 @@ document.addEventListener('DOMContentLoaded', () => {
         drawBox(eCtx, startPos, curr, document.querySelector('input[name="pt"]:checked').value, true);
     };
     window.onmouseup = (e) => {
-        if(!drawing) return; drawing = false;
+        if(!drawing) return; 
+        drawing = false;
         const end = getPos(e);
-        if(Math.abs(end.x - startPos.x) > 5) {
+        if(Math.abs(end.x - startPos.x) > 5 || Math.abs(end.y - startPos.y) > 5) {
             state[state.activeKey].boxes.push({
                 x1: Math.min(startPos.x, end.x), y1: Math.min(startPos.y, end.y),
                 x2: Math.max(startPos.x, end.x), y2: Math.max(startPos.y, end.y),
@@ -127,12 +164,14 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     function renderEditor() {
+        if (!state.activeKey) return;
         eCtx.clearRect(0, 0, eCanvas.width, eCanvas.height);
         eCtx.drawImage(state[state.activeKey].img, 0, 0, eCanvas.width, eCanvas.height);
         const s = eCanvas.width / state[state.activeKey].img.naturalWidth;
         state[state.activeKey].boxes.forEach(b => {
             eCtx.strokeStyle = b.type === 'pos' ? '#10b981' : '#ef4444';
             eCtx.lineWidth = 2;
+            eCtx.setLineDash([]);
             eCtx.strokeRect(b.x1 * s, b.y1 * s, (b.x2 - b.x1) * s, (b.y2 - b.y1) * s);
         });
     }
@@ -144,16 +183,19 @@ document.addEventListener('DOMContentLoaded', () => {
         ctx.strokeRect(p1.x * s, p1.y * s, (p2.x - p1.x) * s, (p2.y - p1.y) * s);
     }
 
-    // 撤销与清空
     document.getElementById('undo-draw').onclick = () => { state[state.activeKey].boxes.pop(); renderEditor(); };
     document.getElementById('clear-draw').onclick = () => { if(confirm("清空吗？")){state[state.activeKey].boxes=[]; renderEditor();} };
-    document.getElementById('close-editor').onclick = () => { drawThumb(state.activeKey); document.getElementById('editor-modal').classList.add('hidden'); };
+    document.getElementById('close-editor').onclick = () => { 
+        drawThumb(state.activeKey); 
+        document.getElementById('editor-modal').classList.add('hidden'); 
+    };
 
+    // 5. 缩略图渲染
     function drawThumb(key) {
         const c = document.getElementById(`${key}-thumb-canvas`);
         const ctx = c.getContext('2d');
         const img = state[key].img;
-        c.width = 300; c.height = 168;
+        c.width = 300; c.height = 168; 
         const s = Math.min(c.width/img.naturalWidth, c.height/img.naturalHeight);
         const ox = (c.width-img.naturalWidth*s)/2, oy = (c.height-img.naturalHeight*s)/2;
         ctx.clearRect(0,0,c.width,c.height);
@@ -165,13 +207,14 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // 6. UI 数值实时更新
     const confRange = document.getElementById('conf-range');
     const confVal = document.getElementById('conf-val');
     confRange.oninput = () => {
         confVal.innerText = parseFloat(confRange.value).toFixed(2);
     };
 
-    // 2. 更新 run-btn 的点击事件处理逻辑
+    // 7. 推理提交逻辑 (无改动)
     document.getElementById('run-btn').onclick = async () => {
         if(!state.target.file) return alert("请上传目标图像");
         
@@ -179,7 +222,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const imgOut = document.getElementById('res-img');
         const dlLink = document.getElementById('dl-link');
         const placeholder = document.getElementById('placeholder');
-        const maskEnable = document.getElementById('mask-enable').checked; // 获取 mask 开关状态
+        const maskEnable = document.getElementById('mask-enable').checked; 
 
         loader.classList.remove('hidden'); 
         imgOut.classList.add('hidden');
@@ -189,11 +232,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const mode = modeSelect.value;
         let apiEndpoint = (mode === 'person-refine') ? '/process-person-refine' : '/process-image';
         
-        // --- 注入通用参数 ---
         fd.append('mode', mode);
         fd.append('target_image', state.target.file);
-        fd.append('confidence_threshold', confRange.value); // 注入置信度
-        fd.append('return_mask', maskEnable);               // 注入是否开启 mask
+        fd.append('confidence_threshold', confRange.value); 
+        fd.append('return_mask', maskEnable);               
 
         const texts = Array.from(document.querySelectorAll('.prompt-val'))
                         .map(i => i.value.trim())
@@ -215,15 +257,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         try {
-            const r = await fetch(apiEndpoint, { 
-                method: 'POST', 
-                body: fd 
-            });
-
-            if (!r.ok) {
-                const errText = await r.text();
-                throw new Error(errText || "服务器推理出错");
-            }
+            const r = await fetch(apiEndpoint, { method: 'POST', body: fd });
+            if (!r.ok) throw new Error(await r.text() || "服务器推理出错");
 
             const blob = await r.blob();
             const url = URL.createObjectURL(blob);
@@ -247,5 +282,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
+    // 初始化运行一次切换逻辑
     modeSelect.dispatchEvent(new Event('change'));
 });

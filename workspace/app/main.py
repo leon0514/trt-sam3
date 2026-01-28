@@ -38,8 +38,8 @@ app.add_middleware(
 
 # 挂载路由
 app.include_router(router_ui.router)
-app.include_router(router_predict.router, prefix="/sam3/v1")
-app.include_router(router_refine.router, prefix="/sam3/v1")
+app.include_router(router_predict.router)
+app.include_router(router_refine.router)
 
 # 静态文件处理
 app.mount("/static", StaticFiles(directory="frontend"), name="static")

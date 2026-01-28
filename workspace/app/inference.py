@@ -27,7 +27,7 @@ class ModelManager:
     tokenizer: Tokenizer = None
 
     @classmethod
-    def initialize(cls, gpu_id: int = 1):
+    def initialize(cls, gpu_id: int = 0):
         if cls.engine is not None:
             return
         print(f"Initializing engine on GPU {gpu_id}...")

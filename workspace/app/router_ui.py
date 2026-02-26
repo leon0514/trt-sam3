@@ -65,7 +65,7 @@ async def process_image(
         if prompt_path and os.path.exists(prompt_path): os.remove(prompt_path)
 
 @router.post("/process-obj-refine")
-async def process_person_refine_ui(
+async def process_obj_refine_ui(
     target_image: UploadFile = File(...),
     text_prompts: str = Form(""),
     pre_defined_text: str = Form("person"),
@@ -82,11 +82,11 @@ async def process_person_refine_ui(
             raise HTTPException(status_code=400, detail="Invalid image file")
             
         refine_texts = [p.strip() for p in text_prompts.split(',') if p.strip()]
-        output_path = inference.run_person_refine(tmp_path, refine_texts, pre_defined_text, confidence_threshold, return_mask)
+        output_path = inference.run_obj_refine(tmp_path, refine_texts, pre_defined_text, confidence_threshold, return_mask)
         return FileResponse(output_path)
 
     except Exception as e:
-        print(f"Error in process_person_refine: {str(e)}")
+        print(f"Error in process_obj_refine: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         if os.path.exists(tmp_path): os.remove(tmp_path)

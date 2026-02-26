@@ -160,8 +160,8 @@ def run_from_image_prompt(target_image_path: str, prompt_image_path: str, boxes:
     results = inference_with_image_prompt(target_img, geom_label, confidence_threshold, return_results)
     return draw_and_save_image(target_img, results, "image_prompt")
 
-def run_person_refine(image_path: str, refine_texts: List[str], pre_defined_text: str = "person", confidence_threshold: float = 0.5, return_mask: bool = True) -> Optional[str]:
+def run_obj_refine(image_path: str, refine_texts: List[str], pre_defined_text: str = "person", confidence_threshold: float = 0.5, return_mask: bool = True) -> Optional[str]:
     image = cv2.imread(image_path)
     if image is None: return None
     results = inference_with_obj_refine(image, refine_texts, pre_defined_text, confidence_threshold, return_mask)
-    return draw_and_save_image(image, results, "person_refine")
+    return draw_and_save_image(image, results, "obj_refine")

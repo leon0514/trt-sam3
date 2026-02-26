@@ -18,6 +18,7 @@ class PromptUnit(BaseModel):
 class InferenceRequest(BaseModel):
     image_base64: str = Field(default="", description="Base64 encoded image data")
     confidence_threshold: float = Field(default=0.5, description="object confidence threshold")
+    text: str = Field(default="person", description="Refine detect text prompt")
     prompts: List[PromptUnit] = Field(..., description="List of prompts")
     return_mask: bool = Field(default=False, description="If True, returns segmentation masks")
 

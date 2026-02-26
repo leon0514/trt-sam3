@@ -41,6 +41,17 @@ body { background: var(--bg-dark); color: #fff; font-family: sans-serif; height:
 
 .text-item { display: flex; gap: 8px; margin-bottom: 8px; }
 .text-item input { flex: 1; padding: 10px; background: #000; border: 1px solid var(--border); color: #fff; border-radius: 6px; }
+
+/* 预定义文本输入框与类别输入保持一致的样式 */
+.styled-input {
+    width: 100%;
+    padding: 10px;
+    background: #000;
+    border: 1px solid var(--border);
+    color: #fff;
+    border-radius: 6px;
+    box-sizing: border-box;
+}
 .del-btn { background: none; border: none; color: #444; cursor: pointer; font-size: 20px; }
 
 .primary-btn { width: 100%; padding: 16px; background: var(--accent); border: none; border-radius: 10px; color: #fff; font-weight: bold; cursor: pointer; }

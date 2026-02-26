@@ -89,18 +89,17 @@ def inference_with_image_prompt(target_image: np.ndarray, geom_label: str, thres
     return ModelManager.engine.forwards([input_obj], geom_label, return_results)[0]
 
 
-def inference_with_person_refine(image: np.ndarray, refine_texts: List[str], threshold: float = 0.5, return_mask: bool = True) -> Optional[List[Any]]:
+def inference_with_obj_refine(image: np.ndarray, refine_texts: List[str], pre_defined_text: str="person", threshold: float = 0.5, return_mask: bool = True) -> Optional[List[Any]]:
     if image is None: return None
 
-    # 1. 识别 Person
-    persons = inference_with_multi_class_prompt(image, ["person"], 0.8, return_mask)
-    if not persons:
+    # 1. 识别 pre_defined_text
+    pre_defined_objs = inference_with_multi_class_prompt(image, [pre_defined_text], 0.7, return_mask)
+    if not pre_defined_objs or len(pre_defined_objs) == 0:
         return []
-
-    final_results = persons.copy()
+    final_results = pre_defined_objs.copy()
 
     # 2. 局部裁剪细化
-    crop_regions = merge_person_boxes(persons, image.shape[1], image.shape[0], max_area_ratio=0.2)
+    crop_regions = merge_person_boxes(pre_defined_objs, image.shape[1], image.shape[0], max_area_ratio=0.2)
     for region in crop_regions:
         x1, y1, x2, y2 = map(int, [
             max(0, region[0]), 
@@ -144,6 +143,7 @@ def run_multi_class_prompt(image_path: str, prompts: List[str], confidence_thres
     image = cv2.imread(image_path)
     if image is None: return None
     results = inference_with_multi_class_prompt(image, prompts, confidence_threshold, return_results)
+    print(results)
     return draw_and_save_image(image, results, "multi_class_prompt")
 
 def run_mixed_prompt(image_path: str, text_prompt: str, boxes: List[dict], confidence_threshold: float = 0.5, return_results: bool = True) -> Optional[str]:
@@ -160,8 +160,8 @@ def run_from_image_prompt(target_image_path: str, prompt_image_path: str, boxes:
     results = inference_with_image_prompt(target_img, geom_label, confidence_threshold, return_results)
     return draw_and_save_image(target_img, results, "image_prompt")
 
-def run_person_refine(image_path: str, refine_texts: List[str], confidence_threshold: float = 0.5, return_mask: bool = True) -> Optional[str]:
+def run_person_refine(image_path: str, refine_texts: List[str], pre_defined_text: str = "person", confidence_threshold: float = 0.5, return_mask: bool = True) -> Optional[str]:
     image = cv2.imread(image_path)
     if image is None: return None
-    results = inference_with_person_refine(image, refine_texts, confidence_threshold, return_mask)
+    results = inference_with_obj_refine(image, refine_texts, pre_defined_text, confidence_threshold, return_mask)
     return draw_and_save_image(image, results, "person_refine")

@@ -11,7 +11,7 @@ const std::string VISION_MODEL = "engine-models/vision-encoder.engine";
 const std::string TEXT_MODEL = "engine-models/text-encoder.engine";
 const std::string DECODER_MODEL = "engine-models/decoder.engine";
 const std::string GEOMETRY_ENCODER_PATH = "engine-models/geometry-encoder.engine";
-const int GPU_ID = 1;
+const int GPU_ID = 0;
 
 const std::array<int64_t, 32> PERSON_IDS = {49406, 2533, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407, 49407};
 const std::array<int64_t, 32> PERSON_MASK = {1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};

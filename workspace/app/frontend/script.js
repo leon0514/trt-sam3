@@ -9,12 +9,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const modeSelect = document.getElementById('mode-select');
     const sectionPromptImg = document.getElementById('section-prompt-img');
     const sectionTextPrompt = document.getElementById('section-text-prompt');
+    const sectionPredefined = document.getElementById('section-predefined-text');
+    const preDefinedInput = document.getElementById('predefined-text');
 
     // 1. 模式切换逻辑
     modeSelect.onchange = () => {
         const mode = modeSelect.value;
         sectionPromptImg.classList.toggle('hidden', mode !== 'from-image');
         sectionTextPrompt.classList.toggle('hidden', mode === 'from-image');
+        // 仅在 obj-refine 模式下显示预定义文本输入框
+        sectionPredefined.classList.toggle('hidden', mode !== 'obj-refine');
     };
 
     // 2. 文本类别管理
@@ -230,7 +234,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const fd = new FormData();
         const mode = modeSelect.value;
-        let apiEndpoint = (mode === 'person-refine') ? '/process-person-refine' : '/process-image';
+        let apiEndpoint = (mode === 'obj-refine') ? '/process-obj-refine' : '/process-image';
         
         fd.append('mode', mode);
         fd.append('target_image', state.target.file);
@@ -253,6 +257,14 @@ document.addEventListener('DOMContentLoaded', () => {
             if (texts) fd.append('text_prompts', texts);
             if (state.target.boxes.length > 0) {
                 fd.append('target_boxes', JSON.stringify(state.target.boxes));
+            }
+        }
+
+        // obj-refine 模式需要额外传递预定义文本
+        if (mode === 'obj-refine') {
+            const preDef = preDefinedInput.value.trim();
+            if (preDef) {
+                fd.append('pre_defined_text', preDef);
             }
         }
 

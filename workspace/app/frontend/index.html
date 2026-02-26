@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TRTSAM3 PRO | 混合提示工作站</title>
     <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon" href="data:;base64,iVBORw0KGgo=">
 </head>
 <body>
     <div class="app-shell">
@@ -21,7 +22,7 @@
                         <option value="box">手动点/框提示</option>
                         <option value="mixed">混合模式提示</option>
                         <option value="from-image">跨图参考提示</option>
-                        <option value="person-refine">人员关联小目标 (Refine)</option> 
+                        <option value="obj-refine">目标关联小目标 (Refine)</option> 
                     </select>
                 </div>
 
@@ -65,6 +66,12 @@
                     <label class="item-label">文本类别设定</label>
                     <div id="text-container" class="prompt-stack"></div>
                     <button id="add-text-btn" class="secondary-btn">+ 添加新类别</button>
+                </div>
+
+                <!-- 目标关联小目标模式专用：预定义文本 -->
+                <div class="config-item hidden" id="section-predefined-text">
+                    <label class="item-label">预定义文本</label>
+                    <input type="text" id="predefined-text" class="styled-input" value="person" placeholder="输入预设类别">
                 </div>
             </div>
 

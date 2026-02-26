@@ -131,7 +131,7 @@ if __name__ == "__main__":
     img_path = "../images/smoke.jpg"
     
     res = client.infer(
-        endpoint="/predict-person-about-small-object", 
+        endpoint="/predict-obj-about-small-object", 
         image_path=img_path,
         prompts=my_prompts, # 传入列表
         conf=0.4,

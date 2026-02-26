@@ -49,7 +49,7 @@ def get_iou(box1, box2):
     area2 = calculate_area(box2)
     return inter_area / float(area1 + area2 - inter_area)
 
-def merge_person_boxes(person_boxes, img_w, img_h, max_area_ratio=0.4, min_area_ratio=0.01, dist_threshold=100):
+def merge_person_boxes(person_boxes, img_w, img_h, max_area_ratio=0.4, min_area_ratio=0.003, dist_threshold=100):
     if not person_boxes: return []
 
     max_area = (img_w * img_h) * max_area_ratio

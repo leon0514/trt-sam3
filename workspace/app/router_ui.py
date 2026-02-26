@@ -48,9 +48,9 @@ async def process_image(
         elif mode == "from-image":
             output_path = inference.run_from_image_prompt(target_path, prompt_path, p_boxes, confidence_threshold, return_mask)
             
-        elif mode == "person-refine":
+        elif mode == "obj-refine":
             # 如果请求误入此接口，重定向逻辑或直接报错提示
-            raise HTTPException(status_code=400, detail="Please use /process-person-refine for this mode")
+            raise HTTPException(status_code=400, detail="Please use /process-object-refine for this mode")
 
         # 检查推理结果
         if not output_path or not os.path.exists(output_path):
@@ -64,10 +64,11 @@ async def process_image(
         if os.path.exists(target_path): os.remove(target_path)
         if prompt_path and os.path.exists(prompt_path): os.remove(prompt_path)
 
-@router.post("/process-person-refine")
+@router.post("/process-obj-refine")
 async def process_person_refine_ui(
     target_image: UploadFile = File(...),
     text_prompts: str = Form(""),
+    pre_defined_text: str = Form("person"),
     confidence_threshold: float = Form(0.5),
     return_mask: bool = Form(True)
 ):
@@ -81,7 +82,7 @@ async def process_person_refine_ui(
             raise HTTPException(status_code=400, detail="Invalid image file")
             
         refine_texts = [p.strip() for p in text_prompts.split(',') if p.strip()]
-        output_path = inference.run_person_refine(tmp_path, refine_texts, confidence_threshold, return_mask)
+        output_path = inference.run_person_refine(tmp_path, refine_texts, pre_defined_text, confidence_threshold, return_mask)
         return FileResponse(output_path)
 
     except Exception as e:

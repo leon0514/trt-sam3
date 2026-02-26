@@ -143,7 +143,6 @@ def run_multi_class_prompt(image_path: str, prompts: List[str], confidence_thres
     image = cv2.imread(image_path)
     if image is None: return None
     results = inference_with_multi_class_prompt(image, prompts, confidence_threshold, return_results)
-    print(results)
     return draw_and_save_image(image, results, "multi_class_prompt")
 
 def run_mixed_prompt(image_path: str, text_prompt: str, boxes: List[dict], confidence_threshold: float = 0.5, return_results: bool = True) -> Optional[str]:

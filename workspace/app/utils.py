@@ -3,9 +3,7 @@ import numpy as np
 import os
 import base64
 from typing import Dict
-
-
-import numpy as np
+from fastapi import APIRouter, HTTPException
 
 def calculate_area(box):
     return max(0, box[2] - box[0]) * max(0, box[3] - box[1])

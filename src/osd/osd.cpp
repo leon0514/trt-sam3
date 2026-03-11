@@ -1,6 +1,6 @@
 #include "osd.hpp"
 #include "osd/cvx_text.hpp" 
-#include "osd/labelLayoutSolver.hpp" 
+#include "osd/labelLayout.hpp" 
 #include <vector>
 #include <tuple>
 #include <functional>
@@ -176,11 +176,9 @@ int calculateDynamicFontSize(int img_w, int img_h, const object::Box& box, doubl
 
 void osd(cv::Mat &img, const object::DetectionBoxArray &boxes, bool osd_rect, double font_scale_ratio) {
     int height = img.rows, width = img.cols;
-    const int PAD_X = 2; // 与 LayoutSolver 保持一致
-    const int PAD_Y = 2;
 
     // 1. 初始化布局求解器
-    LabelLayoutSolver solver(width, height, [&](const std::string& txt, int fontSize) -> TextSize {
+    LabelLayout solver(width, height, [&](const std::string& txt, int fontSize) -> TextSize {
         int w, h, base;
         text_renderer.getTextSize(txt, fontSize, &w, &h, &base);
         return {w, h, base};
@@ -233,12 +231,12 @@ void osd(cv::Mat &img, const object::DetectionBoxArray &boxes, bool osd_rect, do
     solver.solve();
 
     // 4. 绘制文字
-    auto results = solver.getResults();
+    auto results = solver.layout();
 
     for (size_t i = 0; i < results.size() && i < label_colors.size(); ++i) {
         const auto& res = results[i];
         
-        cv::Rect bg_rect(static_cast<int>(res.x), static_cast<int>(res.y), res.width, res.height);
+        cv::Rect bg_rect(static_cast<int>(res.left), static_cast<int>(res.top), res.width, res.height);
         bg_rect &= cv::Rect(0, 0, width, height);
         if (bg_rect.area() <= 0) continue;
 
@@ -246,9 +244,9 @@ void osd(cv::Mat &img, const object::DetectionBoxArray &boxes, bool osd_rect, do
         // cv::rectangle(img, bg_rect, label_colors[i], cv::FILLED);
         
         // 绘制文字 (修正 Baseline 偏移)
-        int text_x = bg_rect.x + PAD_X;
+        int text_x = bg_rect.x + res.padding_x;
         // 坐标 = BoxTop + Padding + Ascent
-        int text_y = bg_rect.y + PAD_Y + res.textAscent;
+        int text_y = bg_rect.y + res.padding_y + res.textAscent;
 
         text_renderer.putText(img, label_texts[i], cv::Point(text_x, text_y), label_colors[i], res.fontSize);
     }

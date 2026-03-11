@@ -9,6 +9,12 @@
 #include <cstring>
 #include <cstdint>
 #include <random>
+#include <string>
+
+template<typename T>
+const T& clamp(const T& v, const T& lo, const T& hi) {
+    return (v < lo) ? lo : (hi < v) ? hi : v;
+}
 
 struct LayoutBox {
     float left, top, right, bottom;
@@ -38,39 +44,37 @@ struct TextSize {
 };
 
 struct LayoutResult {
-    float x, y;
+    float left, top;
     int fontSize;
+    int padding_x;
+    int padding_y;
     int width;
     int height;
     int textAscent;
+    int textDescent;
 };
 
 struct LayoutConfig {
     int gridSize = 100;
     int spatialIndexThreshold = 20;
-    int maxIterations = 30; // 稍微增加迭代次数，确保在多个锚点间找到最优解
+    int maxIterations = 30;
     int paddingX = 2;
     int paddingY = 2;
 
-    // --- 核心锚点成本 (对应 1, 2, 3, 4) ---
-    // 这里的差值（如 0, 10, 20, 30）决定了算法切换位置的“敏感度”
-    float costPos1_Top    = 0.0f;   // 优先级 1: 最优
-    float costPos2_Right  = 10.0f;  // 优先级 2
-    float costPos3_Bottom = 20.0f;  // 优先级 3
-    float costPos4_Left   = 30.0f;  // 优先级 4
+    // 基础位置成本
+    float costPos1_Top    = 0.0f;   // 对应左上
+    float costPos2_Right  = 10.0f;  // 对应右上
+    float costPos3_Bottom = 20.0f;  // 对应左下
+    float costPos4_Left   = 30.0f;  // 对应左上
 
-    // --- 惩罚项 ---
-    // 必须显著大于最高优先级锚点的成本 (30.0)，确保“不够了才开始滑动”
     float costSlidingPenalty = 100.0f; 
+    float costScaleTier      = 1000.0f; // 降低缩放惩罚，让挤不下时更容易缩小
     
-    // 字号缩放惩罚：保持极大值，确保优先换位置而不是先缩小字号
-    float costScaleTier      = 10000.0f; 
-    
-    // 遮挡/重叠惩罚：保持极大值，一旦发生碰撞，成本会迅速超过滑动惩罚
-    float costOccludeObj     = 100000.0f;  
-    float costOverlapBase    = 100000.0f;
+    // 遮挡惩罚
+    float costOccludeObj     = 100000.0f; // 遮挡别人的惩罚
+    float costSelfOcclude    = 10.0f;     // 新增：遮挡自己（目标框）的惩罚，设得很低
+    float costOverlapBase    = 100000.0f; // 标签间重叠惩罚
 };
-
 
 class FlatUniformGrid {
 public:
@@ -147,8 +151,7 @@ public:
     }
 };
 
-
-class LabelLayoutSolver {
+class LabelLayout {
 public:
     struct Candidate {
         LayoutBox box;
@@ -186,7 +189,7 @@ private:
 
 public:
     template <typename Func>
-    LabelLayoutSolver(int w, int h, Func&& func, const LayoutConfig& cfg = LayoutConfig())
+    LabelLayout(int w, int h, Func&& func, const LayoutConfig& cfg = LayoutConfig())
         : config(cfg), canvasWidth(w), canvasHeight(h), measureFunc(std::forward<Func>(func)), rng(12345)
     {
         items.reserve(128);
@@ -256,10 +259,12 @@ public:
 
                 auto checkStaticConflict = [&](int otherId) {
                     const auto& other = items[otherId];
-                    // 先做快速 AABB 判定
                     if (LayoutBox::intersects(cand.box, other.objectBox)) {
                         float inter = LayoutBox::intersectArea(cand.box, other.objectBox);
-                        penalty += (inter * cand.invArea) * config.costOccludeObj;
+                        float overlapRatio = inter * cand.invArea;
+                        // 如果是遮挡自己的目标框，使用极低惩罚
+                        float costFactor = (otherId == item.id) ? config.costSelfOcclude : config.costOccludeObj;
+                        penalty += overlapRatio * costFactor;
                     }
                 };
 
@@ -281,7 +286,6 @@ public:
             item.currentTotalCost = minCost;
         }
 
-        // 加入随机化与剪枝
         processOrder.resize(N);
         for(size_t i=0; i<N; ++i) processOrder[i] = (int)i;
 
@@ -302,7 +306,6 @@ public:
                     auto visitor = [&](int otherId) {
                         if (selfId == otherId) return;
                         const auto& otherBox = items[otherId].currentBox;
-                        // 先做 AABB 判定
                         if (LayoutBox::intersects(box, otherBox)) {
                             float inter = LayoutBox::intersectArea(box, otherBox);
                             overlapCost += (inter * invBoxArea) * config.costOverlapBase;
@@ -321,7 +324,7 @@ public:
                 float curDyn = calculateDynamicCost(item.currentBox, curCand.invArea, item.id);
                 float currentRealTotal = curCand.geometricCost + curCand.staticCost + curDyn;
 
-                if (currentRealTotal < 1.0f) continue; // 足够好，跳过
+                if (currentRealTotal < 1.0f) continue;
 
                 float bestIterCost = currentRealTotal;
                 int bestRelIdx = -1;
@@ -330,8 +333,6 @@ public:
                     if (i == item.selectedRelIndex) continue;
                     const auto& cand = candidatePool[item.candStart + i];
 
-                    // 启发式剪枝
-                    // 如果基础成本已经超过目前最优，则不需要进行动态重叠计算
                     float baseCost = cand.geometricCost + cand.staticCost;
                     if (baseCost >= bestIterCost) continue;
 
@@ -356,14 +357,14 @@ public:
         }
     }
 
-    std::vector<LayoutResult> getResults() const {
+    std::vector<LayoutResult> layout() const {
         std::vector<LayoutResult> results;
         results.reserve(items.size());
         for (const auto& item : items) {
             const auto& cand = candidatePool[item.candStart + item.selectedRelIndex];
             results.push_back({
-                cand.box.left, cand.box.top, (int)cand.fontSize, 
-                (int)cand.box.width(), (int)cand.box.height(), (int)cand.textAscent
+                cand.box.left, cand.box.top, (int)cand.fontSize, (int)config.paddingX, (int)config.paddingY,
+                (int)cand.box.width(), (int)cand.box.height(), (int)cand.textAscent, (int)(cand.box.height() - cand.textAscent)
             });
         }
         return results;
@@ -387,62 +388,56 @@ private:
             float area = fW * fH;
             float invArea = 1.0f / (area > 0.1f ? area : 1.0f);
 
+            // 核心修正：自动 Clamp 坐标不出画面
             auto addCand = [&](float x, float y, float posCost) {
-                if (x < 0 || y < 0 || x + fW > canvasWidth || y + fH > canvasHeight) return;
-                candidatePool.emplace_back();
-                auto& c = candidatePool.back();
-                c.box = {x, y, x + fW, y + fH};
-                c.geometricCost = posCost + scalePenalty;
-                c.staticCost = 0;
-                c.area = area; c.invArea = invArea;
-                c.fontSize = (int16_t)fontSize; c.textAscent = (int16_t)ts.height;
+                float nx = std::max(0.0f, std::min(x, (float)canvasWidth - fW));
+                float ny = std::max(0.0f, std::min(y, (float)canvasHeight - fH));
+                
+                if (fW <= (float)canvasWidth && fH <= (float)canvasHeight) {
+                    candidatePool.emplace_back();
+                    auto& c = candidatePool.back();
+                    c.box = {nx, ny, nx + fW, ny + fH};
+                    // 贴边偏移补偿，确保尽量接近原始锚点
+                    float shift = std::abs(nx - x) + std::abs(ny - y);
+                    c.geometricCost = posCost + scalePenalty + (shift * 0.1f);
+                    c.staticCost = 0;
+                    c.area = area; 
+                    c.invArea = invArea;
+                    c.fontSize = (int16_t)fontSize; 
+                    c.textAscent = (int16_t)ts.height;
+                }
             };
             
-            // 优先级 1: Top (上方左对齐)
-            addCand(obj.left, obj.top - fH, config.costPos1_Top);
+            // 全屏时，这些锚点会自动通过 nx/ny 推到对应的内部角
+            addCand(obj.left, obj.top - fH, config.costPos1_Top);      // 左上内
+            addCand(obj.right, obj.top, config.costPos2_Right);       // 右上内
+            addCand(obj.left, obj.bottom, config.costPos3_Bottom);    // 左下内
+            addCand(obj.left - fW, obj.top, config.costPos4_Left);    // 左侧内部（也是左上）
 
-            // 优先级 2: Right-Top (右侧顶部对齐)
-            addCand(obj.right, obj.top, config.costPos2_Right);
-
-            // 优先级 3: Bottom (下方左对齐)
-            addCand(obj.left, obj.bottom, config.costPos3_Bottom);
-
-            // 优先级 4: Left-Top (左侧顶部对齐)
-            addCand(obj.left - fW, obj.top, config.costPos4_Left);
-
-            // --- 2. 生成滑动候选点 (动态步长版) ---
-            const float baseSlidePenalty = config.costSlidingPenalty; 
-
-            // 辅助函数：根据边长计算步长，确保每隔约 20-50 像素采样一次，但最少 3 步，最多 15 步
-            auto getDynamicSteps = [](float rangeSize) {
-                return std::clamp((int)(rangeSize / 40.0f), 3, 15);
-            };
-
-            // A. 顶部/底部边的滑动
+            // 滑动采样
             float rangeX = std::max(0.0f, obj.right - fW - obj.left);
             if (rangeX > 1.0f) {
-                int stepsX = getDynamicSteps(rangeX);
+                int stepsX = clamp((int)(rangeX / 40.0f), 3, 15);
                 float invStepsX = 1.0f / (float)stepsX;
-                for (int i = 1; i < stepsX; ++i) { // 1 到 steps-1，避开已有的锚点
+                for (int i = 1; i < stepsX; ++i) {
                     float r = i * invStepsX;
                     float x = obj.left + rangeX * r;
-                    float penalty = baseSlidePenalty + (r * 10.0f); 
-                    addCand(x, obj.top - fH, config.costPos1_Top + penalty);
-                    addCand(x, obj.bottom, config.costPos3_Bottom + penalty);
+                    float p = config.costSlidingPenalty + (r * 10.0f);
+                    addCand(x, obj.top - fH, config.costPos1_Top + p);
+                    addCand(x, obj.bottom, config.costPos3_Bottom + p);
                 }
             }
 
-            // B. 左侧/右侧边的滑动
             float rangeY = std::max(0.0f, obj.bottom - fH - obj.top);
             if (rangeY > 1.0f) {
-                int stepsY = getDynamicSteps(rangeY);
+                int stepsY = clamp((int)(rangeY / 40.0f), 3, 15);
                 float invStepsY = 1.0f / (float)stepsY;
                 for (int i = 1; i < stepsY; ++i) {
                     float r = i * invStepsY;
                     float y = obj.top + rangeY * r;
-                    float penalty = baseSlidePenalty + (r * 10.0f);
-                    addCand(obj.right, y, config.costPos2_Right + penalty);
-                    addCand(obj.left - fW, y, config.costPos4_Left + penalty);
+                    float p = config.costSlidingPenalty + (r * 10.0f);
+                    addCand(obj.right, y, config.costPos2_Right + p);
+                    addCand(obj.left - fW, y, config.costPos4_Left + p);
                 }
             }
         }

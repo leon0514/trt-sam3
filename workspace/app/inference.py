@@ -6,7 +6,7 @@ import uuid
 from tokenizers import Tokenizer
 import trtsam3
 from typing import List, Any, Tuple, Optional
-from utils import merge_person_boxes
+from utils import merge_person_boxes, get_person_regions, nms
 
 
 # --- 配置路径 ---
@@ -93,13 +93,16 @@ def inference_with_obj_refine(image: np.ndarray, refine_texts: List[str], pre_de
     if image is None: return None
 
     # 1. 识别 pre_defined_text
-    pre_defined_objs = inference_with_multi_class_prompt(image, [pre_defined_text], 0.7, return_mask)
-    if not pre_defined_objs or len(pre_defined_objs) == 0:
+    all_texts = [pre_defined_text] + refine_texts
+    all_objs = inference_with_multi_class_prompt(image, all_texts, threshold, return_mask)
+    if not all_objs or len(all_objs) == 0:
         return []
-    final_results = pre_defined_objs.copy()
+    pre_defined_objs = [obj for obj in all_objs if obj.class_name == pre_defined_text]
+    final_results = all_objs.copy()
 
     # 2. 局部裁剪细化
     crop_regions = merge_person_boxes(pre_defined_objs, image.shape[1], image.shape[0], max_area_ratio=0.2)
+    # crop_regions = get_person_regions(pre_defined_objs, image.shape[1], image.shape[0])
     for region in crop_regions:
         x1, y1, x2, y2 = map(int, [
             max(0, region[0]), 
@@ -123,6 +126,8 @@ def inference_with_obj_refine(image: np.ndarray, refine_texts: List[str], pre_de
             s.box.bottom += y1
         final_results.extend(local_results)
     return final_results
+    # nms 去重
+    return nms(final_results, iou_threshold=0.5) if final_results else []
 
 def draw_and_save_image(image: np.ndarray, results: List[Any], prefix: str = "result") -> str:
     output_image = image.copy()

@@ -47,7 +47,7 @@ def get_iou(box1, box2):
     area2 = calculate_area(box2)
     return inter_area / float(area1 + area2 - inter_area)
 
-def merge_person_boxes(person_boxes, img_w, img_h, max_area_ratio=0.4, min_area_ratio=0.003, dist_threshold=100):
+def merge_person_boxes(person_boxes, img_w, img_h, max_area_ratio=0.9999999, min_area_ratio=0.0000003, dist_threshold=100):
     if not person_boxes: return []
 
     max_area = (img_w * img_h) * max_area_ratio
@@ -116,6 +116,43 @@ def merge_person_boxes(person_boxes, img_w, img_h, max_area_ratio=0.4, min_area_
     return final_regions
 
 
+def get_person_regions(person_boxes, img_w, img_h, min_area_ratio=0.0000003):
+    """
+    直接返回所有符合面积要求的 person 框，并应用 15% 的 padding
+    """
+    if not person_boxes:
+        return []
+
+    min_area = (img_w * img_h) * min_area_ratio
+    final_regions = []
+
+    for p in person_boxes:
+        # 统一访问框的坐标（根据你的描述，假设 p.box 具有 left, top, right, bottom 属性）
+        # 如果 p 只是字典，请改为: b = [p['box'][0], p['box'][1], p['box'][2], p['box'][3]]
+        b = [float(p.box.left), float(p.box.top), float(p.box.right), float(p.box.bottom)]
+
+        # 计算原始面积
+        area = (b[2] - b[0]) * (b[3] - b[1])
+        if area < min_area:
+            continue
+
+        # 应用 15% 的 padding
+        w, h = b[2] - b[0], b[3] - b[1]
+        pad_w, pad_h = w * 0.15, h * 0.15
+
+        # 裁剪边界到图像内
+        region = [
+            max(0, b[0] - pad_w),
+            max(0, b[1] - pad_h),
+            min(img_w, b[2] + pad_w),
+            min(img_h, b[3] + pad_h)
+        ]
+
+        final_regions.append(region)
+
+    return final_regions
+
+
 def decode_b64(b64_str):
     try:
         data = base64.b64decode(b64_str.split(',')[-1])
@@ -145,3 +182,61 @@ def binary_mask_to_rle(mask: np.ndarray) -> Dict:
         counts_list = [0] + counts_list
         
     return {'size': list(mask.shape), 'counts': counts_list}
+
+
+def box_iou(box1, box2):
+    """
+    计算两个 Box 的交并比 (Intersection over Union)
+    box1, box2: C++ 绑定的 Box 对象，包含 left, top, right, bottom 属性
+    """
+    # 1. 计算交集区域的坐标
+    inter_left = max(box1.left, box2.left)
+    inter_top = max(box1.top, box2.top)
+    inter_right = min(box1.right, box2.right)
+    inter_bottom = min(box1.bottom, box2.bottom)
+    
+    # 2. 计算交集区域的宽和高 (如果两个框不相交，宽或高可能为负数，用 max(0, x) 处理)
+    inter_w = max(0.0, inter_right - inter_left)
+    inter_h = max(0.0, inter_bottom - inter_top)
+    
+    # 3. 计算交集面积
+    inter_area = inter_w * inter_h
+    
+    # 4. 计算两个框各自的面积
+    area1 = (box1.right - box1.left) * (box1.bottom - box1.top)
+    area2 = (box2.right - box2.left) * (box2.bottom - box2.top)
+    
+    # 5. 计算并集面积
+    union_area = area1 + area2 - inter_area
+    
+    # 防止除以 0
+    if union_area <= 0:
+        return 0.0
+        
+    # 6. 返回 IOU
+    return inter_area / union_area
+
+def nms(boxes, iou_threshold=0.5):
+    """
+    支持多类别的非极大值抑制
+    """
+    if not boxes:
+        return []
+    
+    # 按置信度排序
+    boxes = sorted(boxes, key=lambda x: x.score, reverse=True)
+    keep = []
+    
+    while boxes:
+        current = boxes.pop(0)
+        keep.append(current)
+        
+        # 过滤条件：
+        # 如果类别不同，直接保留 (返回 True)
+        # 如果类别相同，则判断 IOU 是否小于阈值，小于阈值才保留
+        boxes = [
+            b for b in boxes 
+            if (current.class_name != b.class_name) or (box_iou(current.box, b.box) < iou_threshold)
+        ]
+        
+    return keep

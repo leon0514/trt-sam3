@@ -81,6 +81,51 @@
                     <div id="predefined-container" class="prompt-stack"></div>
                     <button id="add-predefined-btn" class="secondary-btn">+ 添加预检测标签</button>
                 </div>
+
+                <!-- 目标关联小目标模式专用：Crop 配置 -->
+                <div class="config-item hidden" id="section-crop-config">
+                    <label class="item-label">
+                        Crop 参数配置
+                        <span id="crop-config-toggle" style="cursor:pointer;color:#71717a;font-size:11px;margin-left:8px;">▼ 展开</span>
+                    </label>
+                    <div id="crop-config-panel" class="hidden" style="background:#1c1c1f;border-radius:8px;padding:12px;border:1px solid var(--border);">
+                        <div class="crop-row">
+                            <span>最大尺寸</span>
+                            <input type="number" id="crop-max-size" value="640" min="100" max="2000" step="10">
+                        </div>
+                        <div class="crop-row">
+                            <span>Padding</span>
+                            <input type="number" id="crop-padding" value="20" min="0" max="100" step="5">
+                        </div>
+                        <div class="crop-row">
+                            <span>距离惩罚</span>
+                            <input type="number" id="crop-w-diou" value="30" min="0" max="100" step="5">
+                        </div>
+                        <div class="crop-row">
+                            <span>扩展惩罚</span>
+                            <input type="number" id="crop-w-expansion" value="5" min="0" max="50" step="1">
+                        </div>
+                        <div class="crop-row">
+                            <span>数量惩罚</span>
+                            <input type="number" id="crop-count-penalty" value="120" min="0" max="500" step="10">
+                        </div>
+                        <div class="crop-row">
+                            <span>NMS阈值</span>
+                            <input type="number" id="crop-nms-threshold" value="0.2" min="0" max="1" step="0.05">
+                        </div>
+                        <div class="crop-row">
+                            <span>长宽比修正</span>
+                            <label class="switch" style="transform:scale(0.8);">
+                                <input type="checkbox" id="crop-enable-ar" checked>
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div class="crop-row">
+                            <span>目标长宽比</span>
+                            <input type="number" id="crop-target-ar" value="1.0" min="0.1" max="5" step="0.1">
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <div class="sidebar-footer">

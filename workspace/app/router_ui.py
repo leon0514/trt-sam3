@@ -71,7 +71,8 @@ async def process_obj_refine_ui(
     pre_defined_texts: str = Form("person"),
     confidence_threshold: float = Form(0.5),
     return_mask: bool = Form(True),
-    merge_results: bool = Form(True)
+    merge_results: bool = Form(True),
+    crop_config_json: Optional[str] = Form(None)
 ):
     tmp_path = os.path.join(inference.UPLOADS_DIR, f"refine_{uuid.uuid4()}.jpg")
     try:
@@ -84,7 +85,15 @@ async def process_obj_refine_ui(
             
         refine_texts = [p.strip() for p in text_prompts.split(',') if p.strip()]
         pre_labels = [p.strip() for p in pre_defined_texts.split(',') if p.strip()]
-        output_path = inference.run_obj_refine(tmp_path, refine_texts, pre_labels, confidence_threshold, return_mask, merge_results)
+
+        crop_config = None
+        if crop_config_json:
+            try:
+                crop_config = json.loads(crop_config_json)
+            except Exception:
+                pass
+
+        output_path = inference.run_obj_refine(tmp_path, refine_texts, pre_labels, confidence_threshold, return_mask, merge_results, crop_config)
         return FileResponse(output_path)
 
     except Exception as e:

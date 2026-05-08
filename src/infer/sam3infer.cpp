@@ -939,17 +939,18 @@ InferResult Sam3Infer::process_pre_detect(const Sam3Input &input, bool return_ma
 
     int img_w = input.image.cols;
     int img_h = input.image.rows;
-    // 根据图像短边动态限制 crop 最大尺寸，避免合并出过大的区域
-    int max_crop_size = std::min(640, std::max(img_w, img_h) / 2);
-    omnicrop::OmniCropEngine crop_engine(max_crop_size, 20);
+    // 读取用户传入的 ominicrop 配置，未设置则使用默认值
+    int max_crop_size = input.pre_crop_max_size > 0 ? input.pre_crop_max_size : 640;
+    int padding = input.pre_crop_padding >= 0 ? input.pre_crop_padding : 20;
+    omnicrop::OmniCropEngine crop_engine(max_crop_size, padding);
 
     omnicrop::Config cfg;
-    cfg.w_diou = 30.0f;              // 加大距离惩罚，避免远距离框被合并
-    cfg.w_expansion = 5.0f;
-    cfg.crop_count_penalty = 120.0f; // 加大裁剪数量惩罚，鼓励保留多个独立 crop
-    cfg.nms_threshold = 0.2f;        // 降低重叠阈值，减少重叠 crop 的合并
-    cfg.enable_aspect_ratio_fix = true;
-    cfg.target_aspect_ratio = 1.0f;
+    cfg.w_diou = input.pre_crop_w_diou;
+    cfg.w_expansion = input.pre_crop_w_expansion;
+    cfg.crop_count_penalty = input.pre_crop_count_penalty;
+    cfg.nms_threshold = input.pre_crop_nms_threshold;
+    cfg.enable_aspect_ratio_fix = input.pre_crop_enable_ar_fix;
+    cfg.target_aspect_ratio = input.pre_crop_target_ar;
 
     auto crops = crop_engine.cluster_and_crop(boxes, img_w, img_h, cfg);
 

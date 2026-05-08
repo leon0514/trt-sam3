@@ -15,13 +15,24 @@ class PromptUnit(BaseModel):
 # 阈值
 # 多个 Prompt 单元
 # 是否返回掩码
+class CropConfig(BaseModel):
+    max_size: int = Field(default=640, description="Max crop size")
+    padding: int = Field(default=20, description="Crop padding")
+    w_diou: float = Field(default=30.0, description="Distance penalty weight")
+    w_expansion: float = Field(default=5.0, description="Expansion penalty weight")
+    count_penalty: float = Field(default=120.0, description="Crop count penalty")
+    nms_threshold: float = Field(default=0.2, description="Overlap NMS threshold")
+    enable_ar_fix: bool = Field(default=True, description="Enable aspect ratio fix")
+    target_ar: float = Field(default=1.0, description="Target aspect ratio")
+
 class InferenceRequest(BaseModel):
     image_base64: str = Field(default="", description="Base64 encoded image data")
     confidence_threshold: float = Field(default=0.5, description="object confidence threshold")
-    text: str = Field(default="person", description="Refine detect text prompt")
+    pre_detect_labels: List[str] = Field(default=["person"], description="Pre-detect labels for cropping")
     prompts: List[PromptUnit] = Field(..., description="List of prompts")
     return_mask: bool = Field(default=False, description="If True, returns segmentation masks")
     merge_results: bool = Field(default=True, description="If True, merge full image and crop results")
+    crop_config: Optional[CropConfig] = Field(default=None, description="Omnicrop configuration")
 
 class DetectionResult(BaseModel):
     label: str

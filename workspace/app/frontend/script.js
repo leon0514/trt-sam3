@@ -10,14 +10,25 @@ document.addEventListener('DOMContentLoaded', () => {
     const sectionPromptImg = document.getElementById('section-prompt-img');
     const sectionTextPrompt = document.getElementById('section-text-prompt');
     const sectionPredefined = document.getElementById('section-predefined-text');
+    const sectionCropConfig = document.getElementById('section-crop-config');
 
     // 1. 模式切换逻辑
     modeSelect.onchange = () => {
         const mode = modeSelect.value;
         sectionPromptImg.classList.toggle('hidden', mode !== 'from-image');
         sectionTextPrompt.classList.toggle('hidden', mode === 'from-image');
-        // 仅在 obj-refine 模式下显示预检测标签区域
+        // 仅在 obj-refine 模式下显示预检测标签和 crop 配置区域
         sectionPredefined.classList.toggle('hidden', mode !== 'obj-refine');
+        sectionCropConfig.classList.toggle('hidden', mode !== 'obj-refine');
+    };
+
+    // Crop 配置面板展开/折叠
+    const cropConfigToggle = document.getElementById('crop-config-toggle');
+    const cropConfigPanel = document.getElementById('crop-config-panel');
+    cropConfigToggle.onclick = () => {
+        const isHidden = cropConfigPanel.classList.contains('hidden');
+        cropConfigPanel.classList.toggle('hidden', !isHidden);
+        cropConfigToggle.innerText = isHidden ? '▲ 收起' : '▼ 展开';
     };
 
     // 2. 文本类别管理
@@ -275,7 +286,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        // obj-refine 模式需要额外传递预检测标签和合并开关
+        // obj-refine 模式需要额外传递预检测标签、合并开关和 crop 配置
         if (mode === 'obj-refine') {
             const preDefs = Array.from(document.querySelectorAll('.predefined-val'))
                               .map(i => i.value.trim())
@@ -285,6 +296,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 fd.append('pre_defined_texts', preDefs);
             }
             fd.append('merge_results', mergeEnable);
+
+            // 收集 crop 配置
+            const cropCfg = {
+                max_size: parseInt(document.getElementById('crop-max-size').value) || 640,
+                padding: parseInt(document.getElementById('crop-padding').value) || 20,
+                w_diou: parseFloat(document.getElementById('crop-w-diou').value) || 30.0,
+                w_expansion: parseFloat(document.getElementById('crop-w-expansion').value) || 5.0,
+                count_penalty: parseFloat(document.getElementById('crop-count-penalty').value) || 120.0,
+                nms_threshold: parseFloat(document.getElementById('crop-nms-threshold').value) || 0.2,
+                enable_ar_fix: document.getElementById('crop-enable-ar').checked,
+                target_ar: parseFloat(document.getElementById('crop-target-ar').value) || 1.0
+            };
+            fd.append('crop_config_json', JSON.stringify(cropCfg));
         }
 
         try {

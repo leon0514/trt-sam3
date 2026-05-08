@@ -28,6 +28,17 @@ struct Sam3Input
     bool merge_results = false;                // 如果在预先检测的情况下，是否将原始图的识别结果和裁剪后的图片识别结果进行合并
     std::vector<std::string> pre_detect_labels; // 可选: 预检测得到的标签列表（仅文本提示）
     std::vector<Sam3PromptUnit> prompts; // 必须: 该图对应的所有提示词列表
+
+    // --- ominicrop 配置参数 ---
+    int pre_crop_max_size = 640;         // crop 最大尺寸
+    int pre_crop_padding = 20;           // 边缘 padding
+    float pre_crop_w_diou = 30.0f;       // 距离惩罚权重
+    float pre_crop_w_expansion = 5.0f;   // 扩展惩罚权重
+    float pre_crop_count_penalty = 120.0f; // 裁剪数量惩罚
+    float pre_crop_nms_threshold = 0.2f;   // 重叠 NMS 阈值
+    bool pre_crop_enable_ar_fix = true;    // 是否启用长宽比修正
+    float pre_crop_target_ar = 1.0f;       // 目标长宽比
+
     Sam3Input() = default;
     Sam3Input(const cv::Mat &img)
         : image(img) {}

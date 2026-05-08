@@ -8,14 +8,16 @@ from utils import binary_mask_to_rle
 
 router = APIRouter()
 
-@router.post("/predict-obj-about-small-object", response_model=InferenceResponse)
+@router.post("/predict-obj-refine", response_model=InferenceResponse)
 async def predict_refine(req: InferenceRequest):
     image = decode_b64(req.image_base64)
-    pre_defined_texts = [req.text] if req.text else ["person"]
+    pre_defined_texts = req.pre_detect_labels if req.pre_detect_labels else ["person"]
     refine_texts = [p.text for p in req.prompts if p.text and p.text.lower() not in [t.lower() for t in pre_defined_texts]]
+
+    crop_cfg = req.crop_config.dict() if req.crop_config else None
     raw_results = inference.inference_with_obj_refine(
         image, refine_texts, pre_defined_texts,
-        req.confidence_threshold, req.return_mask, req.merge_results
+        req.confidence_threshold, req.return_mask, req.merge_results, crop_cfg
     )
     
     if not raw_results:

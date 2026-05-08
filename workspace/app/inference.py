@@ -90,7 +90,15 @@ def inference_with_image_prompt(target_image: np.ndarray, geom_label: str, thres
     return ModelManager.engine.forwards([input_obj], geom_label, return_results)[0]
 
 
-def inference_with_obj_refine(image: np.ndarray, refine_texts: List[str], pre_defined_texts: List[str] = ["person"], threshold: float = 0.5, return_mask: bool = True, merge_results: bool = True) -> Optional[List[Any]]:
+def inference_with_obj_refine(
+    image: np.ndarray,
+    refine_texts: List[str],
+    pre_defined_texts: List[str] = ["person"],
+    threshold: float = 0.5,
+    return_mask: bool = True,
+    merge_results: bool = True,
+    crop_config: dict = None
+) -> Optional[List[Any]]:
     if image is None: return None
 
     t0 = time.time()
@@ -106,6 +114,17 @@ def inference_with_obj_refine(image: np.ndarray, refine_texts: List[str], pre_de
     input_obj = trtsam3.Sam3Input(image, prompt_units, threshold)
     input_obj.pre_detect_labels = pre_defined_texts
     input_obj.merge_results = merge_results
+
+    # 应用 ominicrop 配置
+    if crop_config:
+        input_obj.pre_crop_max_size = crop_config.get('max_size', 640)
+        input_obj.pre_crop_padding = crop_config.get('padding', 20)
+        input_obj.pre_crop_w_diou = crop_config.get('w_diou', 30.0)
+        input_obj.pre_crop_w_expansion = crop_config.get('w_expansion', 5.0)
+        input_obj.pre_crop_count_penalty = crop_config.get('count_penalty', 120.0)
+        input_obj.pre_crop_nms_threshold = crop_config.get('nms_threshold', 0.2)
+        input_obj.pre_crop_enable_ar_fix = crop_config.get('enable_ar_fix', True)
+        input_obj.pre_crop_target_ar = crop_config.get('target_ar', 1.0)
 
     results = ModelManager.engine.forwards([input_obj], return_mask)[0]
 
@@ -150,11 +169,19 @@ def run_from_image_prompt(target_image_path: str, prompt_image_path: str, boxes:
     results = inference_with_image_prompt(target_img, geom_label, confidence_threshold, return_results)
     return draw_and_save_image(target_img, results, "image_prompt")
 
-def run_obj_refine(image_path: str, refine_texts: List[str], pre_defined_texts: List[str] = ["person"], confidence_threshold: float = 0.5, return_mask: bool = True, merge_results: bool = True) -> Optional[str]:
+def run_obj_refine(
+    image_path: str,
+    refine_texts: List[str],
+    pre_defined_texts: List[str] = ["person"],
+    confidence_threshold: float = 0.5,
+    return_mask: bool = True,
+    merge_results: bool = True,
+    crop_config: dict = None
+) -> Optional[str]:
     t0 = time.time()
     image = cv2.imread(image_path)
     if image is None: return None
-    results = inference_with_obj_refine(image, refine_texts, pre_defined_texts, confidence_threshold, return_mask, merge_results)
+    results = inference_with_obj_refine(image, refine_texts, pre_defined_texts, confidence_threshold, return_mask, merge_results, crop_config)
     save_path = draw_and_save_image(image, results, "obj_refine")
     t1 = time.time()
     print(f"[run_obj_refine] total_time={t1-t0:.3f}s, save_path={save_path}")

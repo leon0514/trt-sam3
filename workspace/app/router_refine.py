@@ -11,16 +11,22 @@ router = APIRouter()
 @router.post("/predict-obj-about-small-object", response_model=InferenceResponse)
 async def predict_refine(req: InferenceRequest):
     image = decode_b64(req.image_base64)
-    pre_defined_text = req.text if req.text else "person"
-    refine_texts = [p.text for p in req.prompts if p.text and p.text.lower() != pre_defined_text.strip().lower()]
-    raw_results = inference.inference_with_obj_refine(image, refine_texts, pre_defined_text, req.confidence_threshold, req.return_mask)
+    pre_defined_texts = [req.text] if req.text else ["person"]
+    refine_texts = [p.text for p in req.prompts if p.text and p.text.lower() not in [t.lower() for t in pre_defined_texts]]
+    raw_results = inference.inference_with_obj_refine(
+        image, refine_texts, pre_defined_texts,
+        req.confidence_threshold, req.return_mask, req.merge_results
+    )
     
     if not raw_results:
         return InferenceResponse(results=[])
 
     # 2. 关键步骤：手动转换为 Pydantic 定义的 DetectionResult 列表
+    # 过滤掉 C++ 层附加的 __CROP__ 可视化标记框
     final_list = []
     for r in raw_results:
+        if r.class_name == "__CROP__":
+            continue
         box_coords = [float(r.box.left), float(r.box.top), float(r.box.right), float(r.box.bottom)]
 
         final_list.append(DetectionResult(

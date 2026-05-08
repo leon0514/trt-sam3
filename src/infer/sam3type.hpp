@@ -25,6 +25,8 @@ struct Sam3Input
 {
     float confidence_threshold;
     cv::Mat image;                       // 必须: 输入图像
+    bool merge_results = false;                // 如果在预先检测的情况下，是否将原始图的识别结果和裁剪后的图片识别结果进行合并
+    std::vector<std::string> pre_detect_labels; // 可选: 预检测得到的标签列表（仅文本提示）
     std::vector<Sam3PromptUnit> prompts; // 必须: 该图对应的所有提示词列表
     Sam3Input() = default;
     Sam3Input(const cv::Mat &img)

@@ -21,6 +21,7 @@ class InferenceRequest(BaseModel):
     text: str = Field(default="person", description="Refine detect text prompt")
     prompts: List[PromptUnit] = Field(..., description="List of prompts")
     return_mask: bool = Field(default=False, description="If True, returns segmentation masks")
+    merge_results: bool = Field(default=True, description="If True, merge full image and crop results")
 
 class DetectionResult(BaseModel):
     label: str

@@ -3,6 +3,7 @@ import numpy as np
 import os
 import random
 import uuid
+import time
 from tokenizers import Tokenizer
 import trtsam3
 from typing import List, Any, Tuple, Optional
@@ -89,45 +90,30 @@ def inference_with_image_prompt(target_image: np.ndarray, geom_label: str, thres
     return ModelManager.engine.forwards([input_obj], geom_label, return_results)[0]
 
 
-def inference_with_obj_refine(image: np.ndarray, refine_texts: List[str], pre_defined_text: str="person", threshold: float = 0.5, return_mask: bool = True) -> Optional[List[Any]]:
+def inference_with_obj_refine(image: np.ndarray, refine_texts: List[str], pre_defined_texts: List[str] = ["person"], threshold: float = 0.5, return_mask: bool = True, merge_results: bool = True) -> Optional[List[Any]]:
     if image is None: return None
 
-    # 1. 识别 pre_defined_text
-    all_texts = [pre_defined_text] + refine_texts
-    all_objs = inference_with_multi_class_prompt(image, all_texts, threshold, return_mask)
-    if not all_objs or len(all_objs) == 0:
-        return []
-    pre_defined_objs = [obj for obj in all_objs if obj.class_name == pre_defined_text]
-    final_results = all_objs.copy()
+    t0 = time.time()
 
-    # 2. 局部裁剪细化
-    crop_regions = merge_person_boxes(pre_defined_objs, image.shape[1], image.shape[0], max_area_ratio=0.2)
-    # crop_regions = get_person_regions(pre_defined_objs, image.shape[1], image.shape[0])
-    for region in crop_regions:
-        x1, y1, x2, y2 = map(int, [
-            max(0, region[0]), 
-            max(0, region[1]), 
-            min(image.shape[1], region[2]), 
-            min(image.shape[0], region[3])
-        ])
-        
-        cropped_img = image[y1:y2, x1:x2]
-        # uuid_str = uuid.uuid4().hex[:8]
-        # cv2.imwrite(f"{uuid_str}_debug_crop.jpg", cropped_img)  # 调试用
+    # 注册所有需要的 token（预检测标签 + 精细检测标签）
+    all_texts = list(set(pre_defined_texts + refine_texts))
+    register_prompts(all_texts)
 
-        if cropped_img.size == 0:
-            continue
-        # 细化推理
-        local_results = inference_with_multi_class_prompt(cropped_img, refine_texts, threshold, return_mask)
-        for s in local_results:
-            s.box.left += x1
-            s.box.top += y1
-            s.box.right += x1
-            s.box.bottom += y1
-        final_results.extend(local_results)
-    return final_results
-    # nms 去重
-    return nms(final_results, iou_threshold=0.5) if final_results else []
+    # 构造精细检测 prompts
+    prompt_units = [trtsam3.Sam3PromptUnit(txt) for txt in refine_texts]
+
+    # 构造 Sam3Input，使用 C++ 层的 pre_detect_labels + merge_results
+    input_obj = trtsam3.Sam3Input(image, prompt_units, threshold)
+    input_obj.pre_detect_labels = pre_defined_texts
+    input_obj.merge_results = merge_results
+
+    results = ModelManager.engine.forwards([input_obj], return_mask)[0]
+
+    t1 = time.time()
+    print(f"[inference_with_obj_refine] pre_detect={pre_defined_texts}, refine={refine_texts}, "
+          f"merge={merge_results}, results={len(results)}, time={t1-t0:.3f}s")
+
+    return results
 
 def draw_and_save_image(image: np.ndarray, results: List[Any], prefix: str = "result") -> str:
     output_image = image.copy()
@@ -164,8 +150,12 @@ def run_from_image_prompt(target_image_path: str, prompt_image_path: str, boxes:
     results = inference_with_image_prompt(target_img, geom_label, confidence_threshold, return_results)
     return draw_and_save_image(target_img, results, "image_prompt")
 
-def run_obj_refine(image_path: str, refine_texts: List[str], pre_defined_text: str = "person", confidence_threshold: float = 0.5, return_mask: bool = True) -> Optional[str]:
+def run_obj_refine(image_path: str, refine_texts: List[str], pre_defined_texts: List[str] = ["person"], confidence_threshold: float = 0.5, return_mask: bool = True, merge_results: bool = True) -> Optional[str]:
+    t0 = time.time()
     image = cv2.imread(image_path)
     if image is None: return None
-    results = inference_with_obj_refine(image, refine_texts, pre_defined_text, confidence_threshold, return_mask)
-    return draw_and_save_image(image, results, "obj_refine")
+    results = inference_with_obj_refine(image, refine_texts, pre_defined_texts, confidence_threshold, return_mask, merge_results)
+    save_path = draw_and_save_image(image, results, "obj_refine")
+    t1 = time.time()
+    print(f"[run_obj_refine] total_time={t1-t0:.3f}s, save_path={save_path}")
+    return save_path

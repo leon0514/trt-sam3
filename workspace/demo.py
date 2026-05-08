@@ -268,6 +268,44 @@ def demo_prompt_from_another_image(engine, tokenizer):
     cv2.imwrite(os.path.join(OUTPUT_DIR, "prompt_reused_on_target.jpg"), vis_target)
     print(f"Geometry prompt cached under '{geom_label}'. Outputs saved to {OUTPUT_DIR}")
 
+# ==============================================================================
+# 场景 4: 预检测 + 裁剪 + 合并 (pre_detect_labels + merge_results)
+# ==============================================================================
+def demo_pre_detect(engine, tokenizer):
+    print("\n=== Running Pre-Detect + Crop + Merge Test ===")
+    image_path = "images/persons.jpg"
+    image = cv2.imread(image_path)
+    if image is None:
+        print(f"Skipping: {image_path} not found.")
+        return
+
+    # 1. 注册 Token（预检测标签 + 精细检测标签都需要注册）
+    pre_labels = ["person"]
+    fine_labels = ["helmet", "hand"]
+    register_prompts(engine, tokenizer, pre_labels + fine_labels)
+
+    # 2. 构造 Prompt 列表
+    prompt_units = []
+    for txt in fine_labels:
+        prompt_units.append(trtsam3.Sam3PromptUnit(txt))
+
+    # 3. 构造 Input 对象，启用预检测和合并
+    input_obj = trtsam3.Sam3Input(image, prompt_units, 0.5)
+    input_obj.pre_detect_labels = pre_labels
+    input_obj.merge_results = True
+
+    # 4. 推理
+    batch_results = engine.forwards([input_obj], True)
+    image_results = batch_results[0]
+
+    print(f"Detected {len(image_results)} objects across cropped regions and full image.")
+
+    # 5. 可视化
+    vis_img = osd(image, image_results)
+    save_path = os.path.join(OUTPUT_DIR, "demo_pre_detect.jpg")
+    cv2.imwrite(save_path, vis_img)
+    print(f"Result saved to {save_path}")
+
 if __name__ == "__main__":
     try:
         # 初始化资源
@@ -277,7 +315,8 @@ if __name__ == "__main__":
         # demo_multi_class_prompt(engine, tokenizer) # 核心新功能
         # demo_box_prompt(engine)                    # 纯几何提示
         # demo_mixed_prompt(engine, tokenizer)       # 混合提示
-        demo_prompt_from_another_image(engine, tokenizer)
+        # demo_prompt_from_another_image(engine, tokenizer)
+        demo_pre_detect(engine, tokenizer)
         print("\nAll demos finished successfully.")
         
     except Exception as e:

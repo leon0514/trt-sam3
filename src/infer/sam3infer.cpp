@@ -733,10 +733,399 @@ InferResultArray Sam3Infer::forwards(const std::vector<Sam3Input> &inputs, const
     return results;
 }
 
+// NMS 辅助函数（按类别分别做 NMS）
+static float box_iou(const object::Box &a, const object::Box &b)
+{
+    float xx1 = std::max(a.left, b.left);
+    float yy1 = std::max(a.top, b.top);
+    float xx2 = std::min(a.right, b.right);
+    float yy2 = std::min(a.bottom, b.bottom);
+    float inter = std::max(0.0f, xx2 - xx1) * std::max(0.0f, yy2 - yy1);
+    float uni = a.area() + b.area() - inter;
+    return uni > 0 ? inter / uni : 0.0f;
+}
+
+static void nms_filter(InferResult &dets, float threshold = 0.5f)
+{
+    if (dets.size() <= 1)
+        return;
+
+    std::unordered_map<std::string, std::vector<size_t>> groups;
+    for (size_t i = 0; i < dets.size(); ++i)
+        groups[dets[i].class_name].push_back(i);
+
+    std::vector<bool> suppressed(dets.size(), false);
+    for (auto &kv : groups)
+    {
+        auto &indices = kv.second;
+        std::sort(indices.begin(), indices.end(), [&](size_t a, size_t b)
+                  { return dets[a].score > dets[b].score; });
+        for (size_t i = 0; i < indices.size(); ++i)
+        {
+            if (suppressed[indices[i]])
+                continue;
+            for (size_t j = i + 1; j < indices.size(); ++j)
+            {
+                if (suppressed[indices[j]])
+                    continue;
+                if (box_iou(dets[indices[i]].box, dets[indices[j]].box) > threshold)
+                {
+                    suppressed[indices[j]] = true;
+                }
+            }
+        }
+    }
+
+    InferResult filtered;
+    for (size_t i = 0; i < dets.size(); ++i)
+    {
+        if (!suppressed[i])
+            filtered.push_back(std::move(dets[i]));
+    }
+    dets = std::move(filtered);
+}
+
+InferResult Sam3Infer::process_pre_detect(const Sam3Input &input, bool return_mask, void *stream)
+{
+    cudaStream_t s = (cudaStream_t)stream;
+    AutoDevice device_guard(gpu_id_);
+
+    // ========== Step 1: 预检测原图（Vision Encoder + pre_detect_labels Decoder）==========
+    Sam3Input pre_input;
+    pre_input.image = input.image.clone();
+    pre_input.confidence_threshold = input.confidence_threshold;
+    for (const auto &label : input.pre_detect_labels)
+        pre_input.prompts.emplace_back(label);
+    pre_input.pre_detect_labels.clear();
+    pre_input.merge_results = false;
+
+    preprocess(pre_input, 0, stream);
+    if (!encode_image(1, stream))
+        return InferResult();
+
+    std::vector<PromptMeta> pre_prompts;
+    for (size_t j = 0; j < pre_input.prompts.size(); ++j)
+        pre_prompts.push_back({0, (int)j, &pre_input.prompts[j]});
+
+    int pre_max_boxes = 0;
+    for (const auto &p : pre_input.prompts)
+        pre_max_boxes = std::max(pre_max_boxes, (int)p.boxes.size());
+    if (pre_max_boxes > max_boxes_per_prompt_)
+        pre_max_boxes = max_boxes_per_prompt_;
+
+    bool pre_use_geom = !geometry_encoder_path_.empty() && pre_max_boxes > 0;
+    int pre_prompt_len = text_ids_shape_[1] + (pre_use_geom ? (pre_max_boxes + 1) : 0);
+
+    InferResult pre_results;
+    int total_pre_prompts = pre_prompts.size();
+    for (int chunk_start = 0; chunk_start < total_pre_prompts; chunk_start += max_prompt_batch_)
+    {
+        int chunk_end = std::min(chunk_start + max_prompt_batch_, total_pre_prompts);
+        int current_batch_size = chunk_end - chunk_start;
+        std::vector<PromptMeta> batch_prompts(pre_prompts.begin() + chunk_start, pre_prompts.begin() + chunk_end);
+
+        gather_vision_features(batch_prompts, current_batch_size, stream);
+        if (!encode_text(batch_prompts, current_batch_size, stream))
+            continue;
+        if (pre_use_geom && !encode_boxes(batch_prompts, current_batch_size, pre_max_boxes, stream))
+            continue;
+        if (!decode(current_batch_size, pre_prompt_len, stream))
+            continue;
+
+        for (int k = 0; k < current_batch_size; ++k)
+        {
+            const auto &meta = batch_prompts[k];
+            std::string label = meta.ptr && !meta.ptr->text.empty() ? meta.ptr->text : "object";
+            postprocess(pre_results, k, 0, label, pre_input.confidence_threshold, return_mask, stream);
+        }
+    }
+
+    // 预检测没结果
+    if (pre_results.empty())
+    {
+        InferResult merged_result;
+        // 即使预检测为空，如果 merge_results 仍要检测大图 prompts
+        if (input.merge_results)
+        {
+            std::vector<PromptMeta> full_prompts;
+            for (size_t j = 0; j < input.prompts.size(); ++j)
+                full_prompts.push_back({0, (int)j, &input.prompts[j]});
+
+            int full_max_boxes = 0;
+            for (const auto &p : input.prompts)
+                full_max_boxes = std::max(full_max_boxes, (int)p.boxes.size());
+            if (full_max_boxes > max_boxes_per_prompt_)
+                full_max_boxes = max_boxes_per_prompt_;
+
+            bool full_use_geom = !geometry_encoder_path_.empty() && full_max_boxes > 0;
+            int full_prompt_len = text_ids_shape_[1] + (full_use_geom ? (full_max_boxes + 1) : 0);
+
+            int total_full_prompts = full_prompts.size();
+            for (int chunk_start = 0; chunk_start < total_full_prompts; chunk_start += max_prompt_batch_)
+            {
+                int chunk_end = std::min(chunk_start + max_prompt_batch_, total_full_prompts);
+                int current_batch_size = chunk_end - chunk_start;
+                std::vector<PromptMeta> batch_prompts(full_prompts.begin() + chunk_start, full_prompts.begin() + chunk_end);
+
+                gather_vision_features(batch_prompts, current_batch_size, stream);
+                if (!encode_text(batch_prompts, current_batch_size, stream))
+                    continue;
+                if (full_use_geom && !encode_boxes(batch_prompts, current_batch_size, full_max_boxes, stream))
+                    continue;
+                if (!decode(current_batch_size, full_prompt_len, stream))
+                    continue;
+
+                for (int k = 0; k < current_batch_size; ++k)
+                {
+                    const auto &meta = batch_prompts[k];
+                    std::string label = meta.ptr && !meta.ptr->text.empty() ? meta.ptr->text : "object";
+                    postprocess(merged_result, k, 0, label, input.confidence_threshold, return_mask, stream);
+                }
+            }
+            nms_filter(merged_result, 0.5f);
+        }
+        return merged_result;
+    }
+
+    // 初始化 merged_result 为 pre_results
+    InferResult merged_result = pre_results;
+
+    // ========== Step 2: 复用 Vision Features，如果 merge_results 做大图 prompts 检测 ==========
+    if (input.merge_results)
+    {
+        std::vector<PromptMeta> full_prompts;
+        for (size_t j = 0; j < input.prompts.size(); ++j)
+            full_prompts.push_back({0, (int)j, &input.prompts[j]});
+
+        int full_max_boxes = 0;
+        for (const auto &p : input.prompts)
+            full_max_boxes = std::max(full_max_boxes, (int)p.boxes.size());
+        if (full_max_boxes > max_boxes_per_prompt_)
+            full_max_boxes = max_boxes_per_prompt_;
+
+        bool full_use_geom = !geometry_encoder_path_.empty() && full_max_boxes > 0;
+        int full_prompt_len = text_ids_shape_[1] + (full_use_geom ? (full_max_boxes + 1) : 0);
+
+        int total_full_prompts = full_prompts.size();
+        for (int chunk_start = 0; chunk_start < total_full_prompts; chunk_start += max_prompt_batch_)
+        {
+            int chunk_end = std::min(chunk_start + max_prompt_batch_, total_full_prompts);
+            int current_batch_size = chunk_end - chunk_start;
+            std::vector<PromptMeta> batch_prompts(full_prompts.begin() + chunk_start, full_prompts.begin() + chunk_end);
+
+            gather_vision_features(batch_prompts, current_batch_size, stream);
+            if (!encode_text(batch_prompts, current_batch_size, stream))
+                continue;
+            if (full_use_geom && !encode_boxes(batch_prompts, current_batch_size, full_max_boxes, stream))
+                continue;
+            if (!decode(current_batch_size, full_prompt_len, stream))
+                continue;
+
+            for (int k = 0; k < current_batch_size; ++k)
+            {
+                const auto &meta = batch_prompts[k];
+                std::string label = meta.ptr && !meta.ptr->text.empty() ? meta.ptr->text : "object";
+                postprocess(merged_result, k, 0, label, input.confidence_threshold, return_mask, stream);
+            }
+        }
+    }
+
+    // ========== Step 3: 用 ominicrop 合并 pre_results 的框（仅基于预检测结果）==========
+    std::vector<omnicrop::BBox> boxes;
+    for (const auto &det : pre_results)
+    {
+        boxes.emplace_back(det.box.left, det.box.top, det.box.right, det.box.bottom);
+    }
+
+    int img_w = input.image.cols;
+    int img_h = input.image.rows;
+    // 根据图像短边动态限制 crop 最大尺寸，避免合并出过大的区域
+    int max_crop_size = std::min(640, std::max(img_w, img_h) / 2);
+    omnicrop::OmniCropEngine crop_engine(max_crop_size, 20);
+
+    omnicrop::Config cfg;
+    cfg.w_diou = 30.0f;              // 加大距离惩罚，避免远距离框被合并
+    cfg.w_expansion = 5.0f;
+    cfg.crop_count_penalty = 120.0f; // 加大裁剪数量惩罚，鼓励保留多个独立 crop
+    cfg.nms_threshold = 0.2f;        // 降低重叠阈值，减少重叠 crop 的合并
+    cfg.enable_aspect_ratio_fix = true;
+    cfg.target_aspect_ratio = 1.0f;
+
+    auto crops = crop_engine.cluster_and_crop(boxes, img_w, img_h, cfg);
+
+    // 调试信息：打印 ominicrop 结果
+    std::cerr << "[omnicrop] input_boxes=" << boxes.size() << ", output_crops=" << crops.size() << std::endl;
+    for (size_t i = 0; i < crops.size(); ++i)
+    {
+        std::cerr << "[omnicrop] crop[" << i << "]: x1=" << crops[i].x1 << ", y1=" << crops[i].y1
+                  << ", x2=" << crops[i].x2 << ", y2=" << crops[i].y2
+                  << ", w=" << crops[i].width() << ", h=" << crops[i].height() << std::endl;
+    }
+
+    // ========== Step 4: 对每个 crop 区域，复用原图显存做 prompts 检测 ==========
+    int original_img_w = img_w;
+    int original_img_h = img_h;
+
+    for (const auto &crop : crops)
+    {
+        int x1 = (int)crop.x1;
+        int y1 = (int)crop.y1;
+        int cw = (int)(crop.x2 - crop.x1);
+        int ch = (int)(crop.y2 - crop.y1);
+
+        x1 = std::max(0, x1);
+        y1 = std::max(0, y1);
+        cw = std::min(cw, img_w - x1);
+        ch = std::min(ch, img_h - y1);
+
+        if (cw <= 0 || ch <= 0)
+            continue;
+
+        // 构造 crop resize 的 affine 矩阵
+        affine::CropResizeMatrix crop_matrix;
+        crop_matrix.compute(std::make_tuple(cw, ch),
+                            std::make_tuple(input_image_width_, input_image_height_),
+                            std::make_tuple(x1, y1));
+
+        float *h_mat = affine_matrix_.cpu();
+        memcpy(h_mat, crop_matrix.d2i, sizeof(crop_matrix.d2i));
+        cudaMemcpyAsync(affine_matrix_.gpu(), h_mat, sizeof(crop_matrix.d2i), cudaMemcpyHostToDevice, s);
+
+        // 更新 mask_affine_matrix_
+        affine::ResizeMatrix mask_m;
+        mask_m.compute(std::make_tuple(mask_width_, mask_height_),
+                       std::make_tuple(cw, ch));
+        memcpy(mask_affine_matrix_.cpu(), mask_m.d2i, sizeof(mask_m.d2i));
+        cudaMemcpyAsync(mask_affine_matrix_.gpu(), mask_m.d2i, sizeof(mask_m.d2i), cudaMemcpyHostToDevice, s);
+
+        original_image_sizes_[0] = {cw, ch};
+
+        // 直接从原图显存 buffer warp 到 preprocessed_images_（不重新拷贝图像数据）
+        warp_affine_bilinear_and_normalize_plane(
+            original_images_buf_[0]->gpu(), original_img_w * 3, original_img_w, original_img_h,
+            preprocessed_images_.gpu(),
+            input_image_width_, input_image_height_,
+            affine_matrix_.gpu(), 114, preprocess_norm_, s);
+
+        if (!encode_image(1, stream))
+            continue;
+
+        // 调整 prompts 中的 box 坐标为相对于 crop 区域
+        std::vector<Sam3PromptUnit> adjusted_prompts = input.prompts;
+        for (auto &pu : adjusted_prompts)
+        {
+            for (auto &bp : pu.boxes)
+            {
+                bp.second[0] -= x1;
+                bp.second[1] -= y1;
+                bp.second[2] -= x1;
+                bp.second[3] -= y1;
+            }
+        }
+
+        std::vector<PromptMeta> crop_prompts;
+        for (size_t j = 0; j < adjusted_prompts.size(); ++j)
+            crop_prompts.push_back({0, (int)j, &adjusted_prompts[j]});
+
+        int crop_max_boxes = 0;
+        for (const auto &p : adjusted_prompts)
+            crop_max_boxes = std::max(crop_max_boxes, (int)p.boxes.size());
+        if (crop_max_boxes > max_boxes_per_prompt_)
+            crop_max_boxes = max_boxes_per_prompt_;
+
+        bool crop_use_geom = !geometry_encoder_path_.empty() && crop_max_boxes > 0;
+        int crop_prompt_len = text_ids_shape_[1] + (crop_use_geom ? (crop_max_boxes + 1) : 0);
+
+        size_t before_count = merged_result.size();
+        int total_crop_prompts = crop_prompts.size();
+        for (int chunk_start = 0; chunk_start < total_crop_prompts; chunk_start += max_prompt_batch_)
+        {
+            int chunk_end = std::min(chunk_start + max_prompt_batch_, total_crop_prompts);
+            int current_batch_size = chunk_end - chunk_start;
+            std::vector<PromptMeta> batch_prompts(crop_prompts.begin() + chunk_start, crop_prompts.begin() + chunk_end);
+
+            gather_vision_features(batch_prompts, current_batch_size, stream);
+            if (!encode_text(batch_prompts, current_batch_size, stream))
+                continue;
+            if (crop_use_geom && !encode_boxes(batch_prompts, current_batch_size, crop_max_boxes, stream))
+                continue;
+            if (!decode(current_batch_size, crop_prompt_len, stream))
+                continue;
+
+            for (int k = 0; k < current_batch_size; ++k)
+            {
+                const auto &meta = batch_prompts[k];
+                std::string label = meta.ptr && !meta.ptr->text.empty() ? meta.ptr->text : "object";
+                postprocess(merged_result, k, 0, label, input.confidence_threshold, return_mask, stream);
+            }
+        }
+
+        // 坐标映射：将本次 crop 添加的结果映射回原图
+        for (size_t i = before_count; i < merged_result.size(); ++i)
+        {
+            merged_result[i].box.left += x1;
+            merged_result[i].box.top += y1;
+            merged_result[i].box.right += x1;
+            merged_result[i].box.bottom += y1;
+        }
+    }
+
+    // ========== Step 5: NMS 去重（按类别分别做）==========
+    nms_filter(merged_result, 0.5f);
+
+    // 将 ominicrop 的裁剪框作为可视化标记附加到结果中（score=-1 避免影响正常展示）
+    for (const auto &crop : crops)
+    {
+        object::DetectionBox crop_box;
+        crop_box.type = object::ObjectType::DETECTION;
+        crop_box.box.left = crop.x1;
+        crop_box.box.top = crop.y1;
+        crop_box.box.right = crop.x2;
+        crop_box.box.bottom = crop.y2;
+        crop_box.score = -1.0f;
+        crop_box.class_id = -2;
+        crop_box.class_name = "__CROP__";
+        merged_result.push_back(std::move(crop_box));
+    }
+
+    return merged_result;
+}
+
 InferResultArray Sam3Infer::forwards(const std::vector<Sam3Input> &inputs, bool return_mask, void *stream)
 {
     if (inputs.empty())
         return {};
+
+    // 检查是否有 input 需要预检测
+    bool has_pre_detect = false;
+    for (const auto &input : inputs)
+    {
+        if (!input.pre_detect_labels.empty())
+        {
+            has_pre_detect = true;
+            break;
+        }
+    }
+
+    if (has_pre_detect)
+    {
+        // 逐个处理，避免混合 batch 逻辑过于复杂
+        InferResultArray results;
+        results.reserve(inputs.size());
+        for (const auto &input : inputs)
+        {
+            if (input.pre_detect_labels.empty())
+            {
+                auto r = forwards({input}, return_mask, stream);
+                results.push_back(r.empty() ? InferResult() : r[0]);
+            }
+            else
+            {
+                results.push_back(process_pre_detect(input, return_mask, stream));
+            }
+        }
+        return results;
+    }
 
     // 1. 检查图片数量是否超限
     if (inputs.size() > (size_t)max_image_batch_)

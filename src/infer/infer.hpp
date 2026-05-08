@@ -23,7 +23,7 @@ public:
     // 批量推理 (Core API)
     virtual InferResultArray forwards(const std::vector<Sam3Input> &inputs, bool return_mask = false, void *stream = nullptr) = 0;
     virtual InferResultArray forwards(const std::vector<Sam3Input> &inputs, const std::string &geom_label, bool return_mask = false, void *stream = nullptr) = 0;
-
+    
     // 单个推理 (Wrapper)
     virtual InferResult forward(const Sam3Input &input, bool return_mask = false, void *stream = nullptr)
     {

@@ -10,14 +10,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const sectionPromptImg = document.getElementById('section-prompt-img');
     const sectionTextPrompt = document.getElementById('section-text-prompt');
     const sectionPredefined = document.getElementById('section-predefined-text');
-    const preDefinedInput = document.getElementById('predefined-text');
 
     // 1. 模式切换逻辑
     modeSelect.onchange = () => {
         const mode = modeSelect.value;
         sectionPromptImg.classList.toggle('hidden', mode !== 'from-image');
         sectionTextPrompt.classList.toggle('hidden', mode === 'from-image');
-        // 仅在 obj-refine 模式下显示预定义文本输入框
+        // 仅在 obj-refine 模式下显示预检测标签区域
         sectionPredefined.classList.toggle('hidden', mode !== 'obj-refine');
     };
 
@@ -35,6 +34,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     document.getElementById('add-text-btn').onclick = () => addTextInput();
     addTextInput('person');
+
+    // 2.5 预检测标签管理
+    const predefinedContainer = document.getElementById('predefined-container');
+    function addPredefinedInput(val = '') {
+        const div = document.createElement('div');
+        div.className = 'text-item';
+        div.innerHTML = `
+            <input type="text" class="predefined-val" value="${val}" placeholder="输入预检测标签...">
+            <button class="del-btn">&times;</button>
+        `;
+        div.querySelector('.del-btn').onclick = () => div.remove();
+        predefinedContainer.appendChild(div);
+    }
+    document.getElementById('add-predefined-btn').onclick = () => addPredefinedInput();
+    addPredefinedInput('person');
 
     // 3. 核心：图片上传与标注入口隔离修复
     ['target', 'prompt'].forEach(key => {
@@ -226,7 +240,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const imgOut = document.getElementById('res-img');
         const dlLink = document.getElementById('dl-link');
         const placeholder = document.getElementById('placeholder');
-        const maskEnable = document.getElementById('mask-enable').checked; 
+        const maskEnable = document.getElementById('mask-enable').checked;
+        const mergeEnable = document.getElementById('merge-results-enable').checked;
 
         loader.classList.remove('hidden'); 
         imgOut.classList.add('hidden');
@@ -260,12 +275,16 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        // obj-refine 模式需要额外传递预定义文本
+        // obj-refine 模式需要额外传递预检测标签和合并开关
         if (mode === 'obj-refine') {
-            const preDef = preDefinedInput.value.trim();
-            if (preDef) {
-                fd.append('pre_defined_text', preDef);
+            const preDefs = Array.from(document.querySelectorAll('.predefined-val'))
+                              .map(i => i.value.trim())
+                              .filter(v => v)
+                              .join(',');
+            if (preDefs) {
+                fd.append('pre_defined_texts', preDefs);
             }
+            fd.append('merge_results', mergeEnable);
         }
 
         try {

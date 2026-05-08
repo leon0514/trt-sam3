@@ -67,7 +67,7 @@ async def lifespan(app: FastAPI):
     # 模型单例加载
     logger.info("Initializing ModelManager...")
     try:
-        inference.ModelManager.initialize(gpu_id=1)
+        inference.ModelManager.initialize(gpu_id=0)
         logger.info("ModelManager initialized successfully.")
     except Exception as e:
         logger.critical(f"Failed to initialize ModelManager: {e}")

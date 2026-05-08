@@ -40,9 +40,11 @@ async def predict(req: InferenceRequest):
         
         if res: final_raw.extend(res)
 
-    # 3. 格式转换
+    # 3. 格式转换（过滤掉 C++ 层附加的 __CROP__ 可视化标记框）
     final_list = []
     for r in final_raw:
+        if r.class_name == "__CROP__":
+            continue
         box_coords = [float(r.box.left), float(r.box.top), float(r.box.right), float(r.box.bottom)]
         final_list.append(DetectionResult(
             label=r.class_name,

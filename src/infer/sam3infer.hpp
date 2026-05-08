@@ -6,6 +6,7 @@
 #include "common/norm.hpp"
 #include "common/tensorrt.hpp"
 #include "common/device.hpp"
+#include "common/ominicrop.hpp"
 #include <unordered_map>
 #include <vector>
 
@@ -47,7 +48,7 @@ public:
     // 核心实现
     virtual InferResultArray forwards(const std::vector<Sam3Input> &inputs, bool return_mask = false, void *stream = nullptr) override;
     virtual InferResultArray forwards(const std::vector<Sam3Input> &inputs, const std::string &geom_label, bool return_mask = false, void *stream = nullptr) override;
-
+    
 private:
     // 定义内部结构用于扁平化 Prompt
     struct PromptMeta
@@ -71,6 +72,9 @@ private:
 
     // 后处理
     void postprocess(InferResult &image_result, int batch_idx, int image_idx, const std::string &label, float confidence_threshold, bool return_mask, void *stream);
+
+    // 预检测 + 裁剪 + 合并结果
+    InferResult process_pre_detect(const Sam3Input &input, bool return_mask, void *stream);
 
     // 内存初始化 (只调用一次)
     void allocate_memory_once();

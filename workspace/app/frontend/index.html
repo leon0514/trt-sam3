@@ -40,6 +40,13 @@
                             <span class="slider"></span>
                         </label>
                     </div>
+                    <div class="setting-row" style="margin-top: 15px;">
+                        <span>合并大图结果</span>
+                        <label class="switch">
+                            <input type="checkbox" id="merge-results-enable" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
                 </div>
 
                 <div class="config-item">
@@ -68,10 +75,11 @@
                     <button id="add-text-btn" class="secondary-btn">+ 添加新类别</button>
                 </div>
 
-                <!-- 目标关联小目标模式专用：预定义文本 -->
+                <!-- 目标关联小目标模式专用：预检测标签 -->
                 <div class="config-item hidden" id="section-predefined-text">
-                    <label class="item-label">预定义文本</label>
-                    <input type="text" id="predefined-text" class="styled-input" value="person" placeholder="输入预设类别">
+                    <label class="item-label">预检测标签</label>
+                    <div id="predefined-container" class="prompt-stack"></div>
+                    <button id="add-predefined-btn" class="secondary-btn">+ 添加预检测标签</button>
                 </div>
             </div>
 

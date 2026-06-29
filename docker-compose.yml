@@ -1,0 +1,31 @@
+services:
+  trt-sam3:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: trt-sam3:latest
+    container_name: trt-sam3
+    ports:
+      - "8000:8000"
+    volumes:
+      # 后端代码、前端静态资源、Python 扩展 (.so) 映射到容器工作目录
+      # 这样修改代码后无需重新构建镜像即可生效
+      - ./workspace/app:/workspace
+      # TensorRT engine 模型与 tokenizer 映射
+      # 挂载后会覆盖 /workspace/engine-models 目录
+      - ./workspace/engine-models:/workspace/engine-models
+    working_dir: /workspace
+    command: uvicorn server:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-1}
+    environment:
+      - PYTHONUNBUFFERED=1
+      # 可通过宿主机环境变量 UVICORN_WORKERS 控制 uvicorn 进程数，例如 UVICORN_WORKERS=4
+      - UVICORN_WORKERS=${UVICORN_WORKERS:-1}
+    stdin_open: true
+    tty: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

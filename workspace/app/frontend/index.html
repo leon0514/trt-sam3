@@ -3,179 +3,219 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TRTSAM3 PRO | 混合提示工作站</title>
-    <link rel="stylesheet" href="/static/style.css">
-    <link rel="icon" href="data:;base64,iVBORw0KGgo=">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>TRT SAM3 检测演示</title>
+    <link rel="stylesheet" href="/static/style.css?v=9">
 </head>
 <body>
-    <div class="app-shell">
-        <aside class="sidebar">
-            <div class="brand">
-                <div class="logo">TRT<span>SAM3</span></div>
+    <div class="container">
+        <h1>🖼️ TRT SAM3 目标检测与分割</h1>
+        <div class="main-grid">
+            <div class="panel settings-panel" id="settingsPanel">
+                <h3>参数设置</h3>
+                <div class="settings-scroll">
+                    <div class="form-group">
+                        <label for="modeSelect">推理模式</label>
+                        <select id="modeSelect">
+                            <option value="multi-class">🔤 多类别文本提示</option>
+                            <option value="box">📦 纯框提示</option>
+                            <option value="mixed">🔤+📦 文本+框混合提示</option>
+                            <option value="from-image">🖼️ 跨图参考提示</option>
+                            <option value="obj-refine">🔍 目标细化 (obj-refine)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>目标图片</label>
+                        <div class="drop-zone" id="dropZone">
+                            点击选择或拖拽图片到此处
+                            <input type="file" id="imageInput" accept="image/*" style="display:none">
+                        </div>
+                        <div id="targetThumbBox" class="thumb-box" style="display:none">
+                            <img id="previewImage" class="thumb-image" alt="预览">
+                            <div class="thumb-actions">
+                                <button type="button" id="editTargetBoxesBtn" class="secondary">标注 Box</button>
+                                <button type="button" id="reuploadTargetBtn" class="secondary">重新上传</button>
+                            </div>
+                            <div class="box-list" id="targetBoxList"></div>
+                        </div>
+                    </div>
+                    <div class="form-group" id="promptImageGroup" style="display:none">
+                        <label>参考图片（from-image）</label>
+                        <div class="drop-zone" id="promptDropZone">
+                            点击选择或拖拽参考图片到此处
+                            <input type="file" id="promptImageInput" accept="image/*" style="display:none">
+                        </div>
+                        <div id="promptThumbBox" class="thumb-box" style="display:none">
+                            <img id="promptPreviewImage" class="thumb-image" alt="参考图预览">
+                            <div class="thumb-actions">
+                                <button type="button" id="editPromptBoxesBtn" class="secondary">标注 Box</button>
+                                <button type="button" id="reuploadPromptBtn" class="secondary">重新上传</button>
+                            </div>
+                            <div class="box-list" id="promptBoxList"></div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label id="tagInputLabel">识别标签（按 Enter 添加）</label>
+                        <div class="tag-input" id="tagInput">
+                            <div id="tagList"></div>
+                            <input type="text" id="tagAdd" placeholder="输入标签后回车">
+                        </div>
+                        <div class="mode-hint" id="modeHint"></div>
+                    </div>
+                    <div class="form-group">
+                        <label for="confidence">置信度阈值</label>
+                        <input type="range" id="confidence" min="0" max="1" step="0.01" value="0.3">
+                        <div class="range-value" id="confidenceValue">0.30</div>
+                    </div>
+                    <div class="form-group" id="predefinedLabelsGroup" style="display:none">
+                        <label>预检测标签（按 Enter 添加，用于 obj-refine 定位裁剪区域）</label>
+                        <div class="tag-input" id="predefinedTagInput">
+                            <div id="predefinedTagList"></div>
+                            <input type="text" id="predefinedTagAdd" placeholder="输入标签后回车">
+                        </div>
+                    </div>
+                    <div class="form-group" id="mergeResultsGroup" style="display:none">
+                        <div class="checkbox-row">
+                            <input type="checkbox" id="mergeResults" checked>
+                            <label for="mergeResults">合并原图与裁剪结果</label>
+                        </div>
+                    </div>
+                    <div class="form-group" id="cropConfigGroup" style="display:none">
+                        <div class="collapse-header" id="cropConfigToggle">
+                            <span>⚙️ Omnicrop 高级配置</span>
+                            <span>▼</span>
+                        </div>
+                        <div class="collapse-panel" id="cropConfigPanel" style="display:none">
+                            <div class="field-row"><label>max_size</label><input type="number" id="cropMaxSize" value="640"></div>
+                            <div class="field-row"><label>padding</label><input type="number" id="cropPadding" value="20"></div>
+                            <div class="field-row"><label>w_diou</label><input type="number" id="cropWDiou" value="30"></div>
+                            <div class="field-row"><label>w_expansion</label><input type="number" id="cropWExpansion" value="5"></div>
+                            <div class="field-row"><label>count_penalty</label><input type="number" id="cropCountPenalty" value="120"></div>
+                            <div class="field-row"><label>nms_threshold</label><input type="number" id="cropNmsThreshold" value="0.2" step="0.1"></div>
+                            <div class="field-row"><label>target_ar</label><input type="number" id="cropTargetAr" value="1" step="0.1"></div>
+                            <div class="checkbox-row">
+                                <input type="checkbox" id="cropEnableAr" checked>
+                                <label for="cropEnableAr">enable_ar_fix</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>显示选项</label>
+                        <div class="checkbox-row">
+                            <input type="checkbox" id="showBoxes" checked>
+                            <label for="showBoxes">显示检测框</label>
+                        </div>
+                        <div class="checkbox-row">
+                            <input type="checkbox" id="showMasks" checked>
+                            <label for="showMasks">显示分割 Mask</label>
+                        </div>
+                        <div class="checkbox-row">
+                            <input type="checkbox" id="showLabels" checked>
+                            <label for="showLabels">显示标签文字</label>
+                        </div>
+                        <div class="checkbox-row">
+                            <input type="checkbox" id="returnMask" checked>
+                            <label for="returnMask">后端返回 Mask</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="settings-footer">
+                    <button id="submitBtn">开始检测</button>
+                    <div class="stats" id="stats"></div>
+                </div>
             </div>
-            
-            <div class="panel-scroll">
-                <div class="config-item">
-                    <label class="item-label">分析模式</label>
-                    <select id="mode-select" class="styled-select">
-                        <option value="multi-class">多类别文本提示</option>
-                        <option value="box">手动点/框提示</option>
-                        <option value="mixed">混合模式提示</option>
-                        <option value="from-image">跨图参考提示</option>
-                        <option value="obj-refine">目标关联小目标 (Refine)</option> 
+
+            <div class="panel">
+                <div class="panel-header">
+                    <h3>检测结果</h3>
+                    <button id="downloadBtn" class="download-fab" title="下载结果图">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                    </button>
+                </div>
+                <div id="resultContainer" style="display:none">
+                    <div class="image-wrapper" id="imageWrapper">
+                        <img id="sourceImage" alt="source">
+                        <canvas id="overlayCanvas"></canvas>
+                    </div>
+                    <div class="legend" id="legend"></div>
+                </div>
+                <div id="placeholder" style="text-align:center;color:#94a3b8;padding:60px 0">
+                    上传图片并点击“开始检测”查看结果
+                </div>
+                <div id="filterPanel" class="form-group" style="display:none">
+                    <label>按标签筛选结果</label>
+                    <div id="filterList"></div>
+                    <div class="filter-actions">
+                        <button type="button" id="selectAllBtn" class="secondary">☑ 全选</button>
+                        <button type="button" id="selectNoneBtn" class="secondary">☐ 全不选</button>
+                    </div>
+                </div>
+                <div id="scoreFilterPanel" class="form-group" style="display:none">
+                    <label for="displayConfidence">展示置信度阈值（前端过滤）</label>
+                    <input type="range" id="displayConfidence" min="0" max="1" step="0.01" value="0.0">
+                    <div class="range-value" id="displayConfidenceValue">0.00</div>
+                </div>
+                <div id="areaFilterPanel" class="form-group" style="display:none">
+                    <label for="minArea">最小面积（像素）</label>
+                    <input type="number" id="minArea" min="0" step="1" value="0" placeholder="0">
+                </div>
+                <div class="json-panel">
+                    <label>JSON 结果</label>
+                    <textarea id="jsonOutput" readonly placeholder="检测结果 JSON 将显示在这里"></textarea>
+                </div>
+            </div>
+
+            <div class="panel" id="resultListPanel" style="display:none">
+                <h3>检测结果列表</h3>
+                <div class="result-toolbar" style="display:flex; gap:8px; margin-bottom:10px;">
+                    <button type="button" id="toggleShowChecked" class="secondary">只展示已勾选</button>
+                    <button type="button" id="clearCheckedBtn" class="secondary" style="display:none">清除勾选</button>
+                </div>
+                <div class="sort-controls" style="margin-bottom:10px">
+                    <select id="sortBy">
+                        <option value="default">默认顺序</option>
+                        <option value="area_desc">面积从大到小</option>
+                        <option value="area_asc">面积从小到大</option>
+                        <option value="score_desc">置信度从高到低</option>
+                        <option value="score_asc">置信度从低到高</option>
                     </select>
                 </div>
-
-                <div class="config-item">
-                    <label class="item-label">推理配置</label>
-                    <div class="setting-row">
-                        <span>置信度</span>
-                        <input type="range" id="conf-range" min="0.1" max="0.95" step="0.05" value="0.5">
-                        <b id="conf-val">0.50</b>
-                    </div>
-                    <div class="setting-row" style="margin-top: 15px;">
-                        <span>开启分割 (Mask)</span>
-                        <label class="switch">
-                            <input type="checkbox" id="mask-enable" checked>
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                    <div class="setting-row" style="margin-top: 15px;">
-                        <span>合并大图结果</span>
-                        <label class="switch">
-                            <input type="checkbox" id="merge-results-enable" checked>
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                </div>
-
-                <div class="config-item">
-                    <label class="item-label">目标图预览 (支持标注)</label>
-                    <div class="thumb-card" id="target-thumb-box">
-                        <canvas id="target-thumb-canvas"></canvas>
-                        <div class="re-upload-btn" id="re-target">重新上传</div> 
-                        <div class="upload-mask" id="target-mask"><span>+</span> 点击上传目标图</div>
-                        <input type="file" id="target-file" hidden accept="image/*">
-                    </div>
-                </div>
-
-                <div class="config-item" id="section-prompt-img">
-                    <label class="item-label">参考提示图</label>
-                    <div class="thumb-card" id="prompt-thumb-box">
-                        <canvas id="prompt-thumb-canvas"></canvas>
-                        <div class="re-upload-btn" id="re-prompt">重新上传</div>
-                        <div class="upload-mask" id="prompt-mask"><span>🖼️</span> 点击上传参考图</div>
-                        <input type="file" id="prompt-file" hidden accept="image/*">
-                    </div>
-                </div>
-
-                <div class="config-item" id="section-text-prompt">
-                    <label class="item-label">文本类别设定</label>
-                    <div id="text-container" class="prompt-stack"></div>
-                    <button id="add-text-btn" class="secondary-btn">+ 添加新类别</button>
-                </div>
-
-                <!-- 目标关联小目标模式专用：预检测标签 -->
-                <div class="config-item hidden" id="section-predefined-text">
-                    <label class="item-label">预检测标签</label>
-                    <div id="predefined-container" class="prompt-stack"></div>
-                    <button id="add-predefined-btn" class="secondary-btn">+ 添加预检测标签</button>
-                </div>
-
-                <!-- 目标关联小目标模式专用：Crop 配置 -->
-                <div class="config-item hidden" id="section-crop-config">
-                    <label class="item-label">
-                        Crop 参数配置
-                        <span id="crop-config-toggle" style="cursor:pointer;color:#71717a;font-size:11px;margin-left:8px;">▼ 展开</span>
-                    </label>
-                    <div id="crop-config-panel" class="hidden" style="background:#1c1c1f;border-radius:8px;padding:12px;border:1px solid var(--border);">
-                        <div class="crop-row">
-                            <span>最大尺寸</span>
-                            <input type="number" id="crop-max-size" value="640" min="100" max="2000" step="10">
-                        </div>
-                        <div class="crop-row">
-                            <span>Padding</span>
-                            <input type="number" id="crop-padding" value="20" min="0" max="100" step="5">
-                        </div>
-                        <div class="crop-row">
-                            <span>距离惩罚</span>
-                            <input type="number" id="crop-w-diou" value="30" min="0" max="100" step="5">
-                        </div>
-                        <div class="crop-row">
-                            <span>扩展惩罚</span>
-                            <input type="number" id="crop-w-expansion" value="5" min="0" max="50" step="1">
-                        </div>
-                        <div class="crop-row">
-                            <span>数量惩罚</span>
-                            <input type="number" id="crop-count-penalty" value="120" min="0" max="500" step="10">
-                        </div>
-                        <div class="crop-row">
-                            <span>NMS阈值</span>
-                            <input type="number" id="crop-nms-threshold" value="0.2" min="0" max="1" step="0.05">
-                        </div>
-                        <div class="crop-row">
-                            <span>长宽比修正</span>
-                            <label class="switch" style="transform:scale(0.8);">
-                                <input type="checkbox" id="crop-enable-ar" checked>
-                                <span class="slider"></span>
-                            </label>
-                        </div>
-                        <div class="crop-row">
-                            <span>目标长宽比</span>
-                            <input type="number" id="crop-target-ar" value="1.0" min="0.1" max="5" step="0.1">
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="sidebar-footer">
-                <button id="run-btn" class="primary-btn">推理</button>
-            </div>
-        </aside>
-
-        <main class="viewer">
-            <header class="viewer-head">
-                <span class="view-title">处理预览</span>
-                <button id="dl-link" class="download-btn hidden">保存结果</button>
-            </header>
-            <div class="stage">
-                <div id="loader" class="loader hidden">
-                    <div class="spinner"></div>
-                    <p>AI 推理中...</p>
-                </div>
-                <div id="placeholder" class="placeholder">请上传图片并配置提示</div>
-                <div class="result-wrap">
-                    <img id="res-img" class="hidden">
-                </div>
-            </div>
-        </main>
-    </div>
-
-    <div id="editor-modal" class="modal hidden">
-        <div class="modal-nav">
-            <div class="nav-left">标注校准控制台</div>
-            <div class="nav-center">
-                <div class="seg-switcher">
-                    <input type="radio" name="pt" value="pos" id="pos" checked>
-                    <label for="pos">正向</label>
-                    <input type="radio" name="pt" value="neg" id="neg">
-                    <label for="neg">负向</label>
-                    <div class="seg-bg"></div>
-                </div>
-            </div>
-            <div class="nav-right">
-                <button id="undo-draw" class="action-btn undo">撤销上一个</button>
-                <button id="clear-draw" class="action-btn clear">清空全部</button>
-                <button id="close-editor" class="action-btn confirm">保存并返回</button>
+                <div id="detectionList"></div>
             </div>
         </div>
-        <div class="modal-body">
-            <div class="canvas-container">
-                <canvas id="editor-canvas"></canvas>
+    </div>
+    <div class="toast" id="toast"></div>
+
+    <div id="editorModal" class="modal" style="display:none">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="editorTitle">标注 Box</h3>
+                <button type="button" id="closeEditor" class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="editor-canvas-wrapper">
+                    <canvas id="editorCanvas"></canvas>
+                </div>
+                <div class="editor-tools">
+                    <div class="radio-row">
+                        <label><input type="radio" name="boxType" value="pos" checked> 正样本 (pos)</label>
+                        <label><input type="radio" name="boxType" value="neg"> 负样本 (neg)</label>
+                    </div>
+                    <div class="editor-actions">
+                        <button type="button" id="undoBoxBtn" class="secondary">撤销</button>
+                        <button type="button" id="clearBoxesBtn" class="secondary">清空</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
-    <script src="/static/script.js"></script>
+    <script src="/static/script.js?v=9"></script>
 </body>
 </html>

@@ -2,6 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from starlette.staticfiles import StaticFiles as StarletteStaticFiles
+from starlette.responses import Response
 from contextlib import asynccontextmanager
 import uvicorn
 import os
@@ -11,7 +13,6 @@ import sys
 from loguru import logger
 
 import inference
-import router_ui
 import router_predict
 import router_refine
 
@@ -58,12 +59,6 @@ async def lifespan(app: FastAPI):
     # --- Startup 逻辑 ---
     logger.info("Application startup...")
 
-    # 确保文件夹存在
-    logger.info(f"Ensuring directory exists: {inference.UPLOADS_DIR}")
-    os.makedirs(inference.UPLOADS_DIR, exist_ok=True)
-    logger.info(f"Ensuring directory exists: {inference.OUTPUT_DIR}")
-    os.makedirs(inference.OUTPUT_DIR, exist_ok=True)
-    
     # 模型单例加载
     logger.info("Initializing ModelManager...")
     try:
@@ -79,7 +74,7 @@ async def lifespan(app: FastAPI):
     # --- Shutdown 逻辑 ---
     logger.info("Application shutting down...")
 
-app = FastAPI(title="TRTSAM3 System", lifespan=lifespan)
+app = FastAPI(title="TRT SAM3 System", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -90,12 +85,19 @@ app.add_middleware(
 )
 
 # 挂载路由
-app.include_router(router_ui.router)
 app.include_router(router_predict.router)
 app.include_router(router_refine.router)
 
-# 静态文件处理
-app.mount("/static", StaticFiles(directory="frontend"), name="static")
+# 静态文件处理 — 开发阶段禁用缓存，避免前端迭代时浏览器缓存旧文件
+class NoCacheStaticFiles(StarletteStaticFiles):
+    async def get_response(self, path: str, scope) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
+app.mount("/static", NoCacheStaticFiles(directory="frontend"), name="static")
 
 @app.get("/")
 async def read_index():

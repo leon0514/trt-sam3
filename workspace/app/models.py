@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict
+from typing import List, Optional
 
 class BoxInput(BaseModel):
     label: str = Field(default="pos", description="'pos' for positive, 'neg' for negative")
@@ -38,7 +38,9 @@ class DetectionResult(BaseModel):
     label: str
     score: float
     box: List[float]
-    mask: Optional[Dict] = None
+    mask: Optional[List[int]] = None
+    mask_width: Optional[int] = None
+    mask_height: Optional[int] = None
 
 class InferenceResponse(BaseModel):
     results: List[DetectionResult]

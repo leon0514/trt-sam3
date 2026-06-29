@@ -21,7 +21,6 @@ __global__ void sam3_postprocess_kernel(
     float* filtered_boxes_gpu,
     int* filtered_indices_gpu,
     float* filtered_scores_gpu,
-    int* d_filtered_count,
     int num_queries,
     int MASK_H, int MASK_W,
     int orig_w, int orig_h,

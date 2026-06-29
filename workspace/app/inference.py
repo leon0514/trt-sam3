@@ -11,11 +11,12 @@ from utils import merge_person_boxes, get_person_regions, nms
 
 
 # --- 配置路径 ---
-VISION_MODEL = "../engine-models/vision-encoder.engine"
-TEXT_MODEL = "../engine-models/text-encoder.engine"
-DECODER_MODEL = "../engine-models/decoder.engine"
-GEOMETRY_MODEL = "../engine-models/geometry-encoder.engine"
-TOKENIZER_PATH = "../engine-models/tokenizer.json"
+VISION_MODEL = "engine-models/vision-encoder.engine"
+TEXT_MODEL = "engine-models/text-encoder.engine"
+DECODER_MODEL = "engine-models/decoder.engine"
+# GEOMETRY_MODEL = "engine-models/geometry-encoder.engine"
+GEOMETRY_MODEL = ""  # 如果没有单独的几何编码器，可以设置为 None，使用主编码器处理几何输入
+TOKENIZER_PATH = "engine-models/tokenizer.json"
 OUTPUT_DIR = "outputs"
 UPLOADS_DIR = "uploads"
 

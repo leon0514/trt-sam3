@@ -11,7 +11,6 @@ __global__ void sam3_postprocess_kernel(
     float* filtered_boxes_gpu,
     int* filtered_indices_gpu,
     float* filtered_scores_gpu,
-    int* d_filtered_count,
     int num_queries,
     int MASK_H, int MASK_W,
     int orig_w, int orig_h,
@@ -26,9 +25,8 @@ __global__ void sam3_postprocess_kernel(
     float score = sigmoid_gpu(pred_logits_gpu[idx]) * presence_score;
 
     if (score > conf_threshold) {
-        int current_idx = atomicAdd(d_filtered_count, 1);
-        filtered_scores_gpu[current_idx] = score;
-        filtered_indices_gpu[current_idx] = idx;
+        filtered_scores_gpu[idx] = score;
+        filtered_indices_gpu[idx] = idx;
 
         const float* box_ptr = pred_boxes_gpu + (idx * 4);
         float x1 = box_ptr[0] * orig_w;
@@ -36,10 +34,17 @@ __global__ void sam3_postprocess_kernel(
         float x2 = box_ptr[2] * orig_w;
         float y2 = box_ptr[3] * orig_h;
 
-        filtered_boxes_gpu[current_idx * 4 + 0] = fmaxf(0.0f, fminf(x1, (float)orig_w));
-        filtered_boxes_gpu[current_idx * 4 + 1] = fmaxf(0.0f, fminf(y1, (float)orig_h));
-        filtered_boxes_gpu[current_idx * 4 + 2] = fmaxf(0.0f, fminf(x2, (float)orig_w));
-        filtered_boxes_gpu[current_idx * 4 + 3] = fmaxf(0.0f, fminf(y2, (float)orig_h));
+        filtered_boxes_gpu[idx * 4 + 0] = fmaxf(0.0f, fminf(x1, (float)orig_w));
+        filtered_boxes_gpu[idx * 4 + 1] = fmaxf(0.0f, fminf(y1, (float)orig_h));
+        filtered_boxes_gpu[idx * 4 + 2] = fmaxf(0.0f, fminf(x2, (float)orig_w));
+        filtered_boxes_gpu[idx * 4 + 3] = fmaxf(0.0f, fminf(y2, (float)orig_h));
+    } else {
+        filtered_scores_gpu[idx] = -1.0f;
+        filtered_indices_gpu[idx] = -1;
+        filtered_boxes_gpu[idx * 4 + 0] = 0.0f;
+        filtered_boxes_gpu[idx * 4 + 1] = 0.0f;
+        filtered_boxes_gpu[idx * 4 + 2] = 0.0f;
+        filtered_boxes_gpu[idx * 4 + 3] = 0.0f;
     }
 }
 

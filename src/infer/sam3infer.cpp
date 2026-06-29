@@ -173,7 +173,7 @@ bool Sam3Infer::setup_geometry_input(const cv::Mat &image,
     cudaStream_t s = (cudaStream_t) nullptr;
     cudaMemcpyAsync(geom_features_cache_[label]->gpu(), geom_features_.gpu(), geom_features_.gpu_bytes(), cudaMemcpyDeviceToDevice, s);
     cudaMemcpyAsync(geom_mask_cache_[label]->gpu(), geom_mask_.gpu(), geom_mask_.gpu_bytes(), cudaMemcpyDeviceToDevice, s);
-    cudaStreamSynchronize(s);
+    // D2D 异步拷贝，后续 forwards() 会在同一 stream 上顺序执行，无需在此处同步
     return true;
 }
 
@@ -547,99 +547,112 @@ void Sam3Infer::postprocess(InferResult &image_result, int batch_idx, int image_
     float *d_filter_scores = filter_scores_.gpu() + batch_idx * num_queries_;
     int *d_filter_indices = filter_indices_.gpu() + batch_idx * num_queries_;
 
-    cudaMemsetAsync(box_count_.gpu(), 0, sizeof(int), s);
-
-    // 筛选
+    // 筛选：每个 query 固定位置输出，无效条目 score = -1.0f（不再使用 atomicAdd）
     sam3_postprocess_plane(
         d_pred_masks, d_pred_boxes, d_pred_logits, d_presence,
-        d_filter_boxes, d_filter_indices, d_filter_scores, box_count_.gpu(),
+        d_filter_boxes, d_filter_indices, d_filter_scores,
         num_queries_, mask_height_, mask_width_,
         original_image_sizes_[image_idx].first, original_image_sizes_[image_idx].second,
         confidence_threshold, s);
 
-    cudaMemcpyAsync(box_count_.cpu(), box_count_.gpu(), sizeof(int), cudaMemcpyDeviceToHost, s);
+    // 使用预分配的 pinned memory 直接 D2H 全部 num_queries_ 个结果（异步）
+    float *h_filter_boxes = filter_boxes_.cpu() + batch_idx * num_queries_ * 4;
+    float *h_filter_scores = filter_scores_.cpu() + batch_idx * num_queries_;
+    int *h_filter_indices = filter_indices_.cpu() + batch_idx * num_queries_;
+
+    cudaMemcpyAsync(h_filter_boxes, d_filter_boxes, num_queries_ * 4 * sizeof(float), cudaMemcpyDeviceToHost, s);
+    cudaMemcpyAsync(h_filter_scores, d_filter_scores, num_queries_ * sizeof(float), cudaMemcpyDeviceToHost, s);
+    cudaMemcpyAsync(h_filter_indices, d_filter_indices, num_queries_ * sizeof(int), cudaMemcpyDeviceToHost, s);
+
+    // 仅需一次同步，等待所有筛选结果传回 CPU
     cudaStreamSynchronize(s);
-    int count = *box_count_.cpu();
 
-    if (count > 0)
+    // 在 CPU 上收集有效结果索引
+    std::vector<int> valid_indices;
+    valid_indices.reserve(num_queries_);
+    for (int i = 0; i < num_queries_; ++i)
     {
-        std::vector<float> h_boxes(count * 4);
-        std::vector<float> h_scores(count);
-        std::vector<int> h_indices(count);
+        if (h_filter_scores[i] >= 0.0f)
+            valid_indices.push_back(i);
+    }
 
-        cudaMemcpyAsync(h_boxes.data(), d_filter_boxes, count * 4 * sizeof(float), cudaMemcpyDeviceToHost, s);
-        cudaMemcpyAsync(h_scores.data(), d_filter_scores, count * sizeof(float), cudaMemcpyDeviceToHost, s);
-        cudaMemcpyAsync(h_indices.data(), d_filter_indices, count * sizeof(int), cudaMemcpyDeviceToHost, s);
+    int count = (int)valid_indices.size();
+    if (count == 0)
+        return;
 
-        if (!return_mask)
+    if (!return_mask)
+    {
+        for (int idx : valid_indices)
         {
-            for (int i = 0; i < count; ++i)
-            {
-                float *b = h_boxes.data() + i * 4;
-                image_result.push_back(object::createBox(b[0], b[1], b[2], b[3], h_scores[i], -1, label));
-            }
-            return;
+            float *b = h_filter_boxes + idx * 4;
+            image_result.push_back(object::createBox(b[0], b[1], b[2], b[3], h_filter_scores[idx], -1, label));
         }
+        return;
+    }
 
-        float *h_base_matrix = mask_affine_matrix_.cpu() + image_idx * 6;
-        float *h_box_matrices = box_affine_matrices_.cpu();
+    // --- return_mask = true 分支 ---
+    float *h_base_matrix = mask_affine_matrix_.cpu() + image_idx * 6;
+    float *h_box_matrices = box_affine_matrices_.cpu() + batch_idx * num_queries_ * 6;
 
-        size_t total_mask_pixels = 0;
-        std::vector<size_t> mask_offsets(count);
-        std::vector<cv::Size> mask_sizes(count);
+    size_t total_mask_pixels = 0;
+    std::vector<size_t> mask_offsets(count);
+    std::vector<cv::Size> mask_sizes(count);
 
-        for (int i = 0; i < count; ++i)
-        {
-            float *b = h_boxes.data() + i * 4;
-            int x1 = std::max(0, (int)b[0]);
-            int y1 = std::max(0, (int)b[1]);
-            int x2 = std::min(original_image_sizes_[image_idx].first, (int)b[2]);
-            int y2 = std::min(original_image_sizes_[image_idx].second, (int)b[3]);
+    for (int k = 0; k < count; ++k)
+    {
+        int idx = valid_indices[k];
+        float *b = h_filter_boxes + idx * 4;
+        int x1 = std::max(0, (int)b[0]);
+        int y1 = std::max(0, (int)b[1]);
+        int x2 = std::min(original_image_sizes_[image_idx].first, (int)b[2]);
+        int y2 = std::min(original_image_sizes_[image_idx].second, (int)b[3]);
 
-            int box_w = std::max(1, x2 - x1);
-            int box_h = std::max(1, y2 - y1);
+        int box_w = std::max(1, x2 - x1);
+        int box_h = std::max(1, y2 - y1);
 
-            mask_sizes[i] = cv::Size(box_w, box_h);
-            mask_offsets[i] = total_mask_pixels;
-            total_mask_pixels += box_w * box_h;
+        mask_sizes[k] = cv::Size(box_w, box_h);
+        mask_offsets[k] = total_mask_pixels;
+        total_mask_pixels += box_w * box_h;
 
-            float *m_dst = h_box_matrices + i * 6;
-            m_dst[0] = h_base_matrix[0];
-            m_dst[1] = h_base_matrix[1];
-            m_dst[3] = h_base_matrix[3];
-            m_dst[4] = h_base_matrix[4];
-            m_dst[2] = h_base_matrix[0] * x1 + h_base_matrix[1] * y1 + h_base_matrix[2];
-            m_dst[5] = h_base_matrix[3] * x1 + h_base_matrix[4] * y1 + h_base_matrix[5];
-        }
+        float *m_dst = h_box_matrices + idx * 6;
+        m_dst[0] = h_base_matrix[0];
+        m_dst[1] = h_base_matrix[1];
+        m_dst[3] = h_base_matrix[3];
+        m_dst[4] = h_base_matrix[4];
+        m_dst[2] = h_base_matrix[0] * x1 + h_base_matrix[1] * y1 + h_base_matrix[2];
+        m_dst[5] = h_base_matrix[3] * x1 + h_base_matrix[4] * y1 + h_base_matrix[5];
+    }
 
-        mask_buffer_.gpu(total_mask_pixels);
-        mask_buffer_.cpu(total_mask_pixels);
+    mask_buffer_.gpu(total_mask_pixels);
+    mask_buffer_.cpu(total_mask_pixels);
 
-        cudaMemcpyAsync(box_affine_matrices_.gpu(), box_affine_matrices_.cpu(), count * 6 * sizeof(float), cudaMemcpyHostToDevice, s);
+    cudaMemcpyAsync(box_affine_matrices_.gpu() + batch_idx * num_queries_ * 6,
+                    h_box_matrices,
+                    num_queries_ * 6 * sizeof(float), cudaMemcpyHostToDevice, s);
 
-        for (int i = 0; i < count; ++i)
-        {
-            int idx = h_indices[i];
-            float *src = d_pred_masks + idx * mask_height_ * mask_width_;
-            uint8_t *dst = mask_buffer_.gpu() + mask_offsets[i];
-            float *d_matrix = box_affine_matrices_.gpu() + i * 6;
+    for (int k = 0; k < count; ++k)
+    {
+        int idx = h_filter_indices[valid_indices[k]];
+        float *src = d_pred_masks + idx * mask_height_ * mask_width_;
+        uint8_t *dst = mask_buffer_.gpu() + mask_offsets[k];
+        float *d_matrix = box_affine_matrices_.gpu() + batch_idx * num_queries_ * 6 + valid_indices[k] * 6;
 
-            warp_affine_bilinear_single_channel_mask_plane(
-                src, mask_width_, mask_width_, mask_height_,
-                dst, mask_sizes[i].width, mask_sizes[i].height,
-                d_matrix, 0, s);
-        }
+        warp_affine_bilinear_single_channel_mask_plane(
+            src, mask_width_, mask_width_, mask_height_,
+            dst, mask_sizes[k].width, mask_sizes[k].height,
+            d_matrix, 0, s);
+    }
 
-        cudaMemcpyAsync(mask_buffer_.cpu(), mask_buffer_.gpu(), total_mask_pixels, cudaMemcpyDeviceToHost, s);
-        cudaStreamSynchronize(s);
+    cudaMemcpyAsync(mask_buffer_.cpu(), mask_buffer_.gpu(), total_mask_pixels, cudaMemcpyDeviceToHost, s);
+    cudaStreamSynchronize(s);
 
-        for (int i = 0; i < count; ++i)
-        {
-            float *b = h_boxes.data() + i * 4;
-            uint8_t *mask_ptr = mask_buffer_.cpu() + mask_offsets[i];
-            cv::Mat bin_mask(mask_sizes[i].height, mask_sizes[i].width, CV_8U, mask_ptr);
-            image_result.push_back(object::createSegmentationBox(b[0], b[1], b[2], b[3], bin_mask.clone(), h_scores[i], -1, label));
-        }
+    for (int k = 0; k < count; ++k)
+    {
+        int idx = valid_indices[k];
+        float *b = h_filter_boxes + idx * 4;
+        uint8_t *mask_ptr = mask_buffer_.cpu() + mask_offsets[k];
+        cv::Mat bin_mask(mask_sizes[k].height, mask_sizes[k].width, CV_8U, mask_ptr);
+        image_result.push_back(object::createSegmentationBox(b[0], b[1], b[2], b[3], bin_mask.clone(), h_filter_scores[idx], -1, label));
     }
 }
 

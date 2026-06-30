@@ -797,10 +797,26 @@ function rleDecodeToCanvas(rle, width, height, color = null) {
 function renderDetectionList(visibleItems) {
     els.resultListPanel.style.display = 'flex';
     els.detectionList.style.display = 'block';
-    const grid = document.createElement('div');
-    grid.className = 'detection-grid';
     const hasChecked = checkedResultIndices.size > 0;
     els.clearCheckedBtn.style.display = hasChecked ? 'block' : 'none';
+
+    els.detectionList.innerHTML = '';
+    if (visibleItems.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'empty-state';
+        if (showOnlyChecked && checkedResultIndices.size === 0) {
+            empty.textContent = '当前没有勾选任何结果，请先在列表中勾选目标，或切换为“展示全部结果”。';
+        } else if (showOnlyChecked) {
+            empty.textContent = '已开启“只展示已勾选”，但当前筛选条件无匹配结果。';
+        } else {
+            empty.textContent = '当前筛选条件无匹配结果。';
+        }
+        els.detectionList.appendChild(empty);
+        return;
+    }
+
+    const grid = document.createElement('div');
+    grid.className = 'detection-grid';
     visibleItems.forEach(({ item, originalIndex }, idx) => {
         const area = getBoxArea(item);
         const boxStr = item.box ? item.box.map(v => Math.round(v)).join(', ') : '-';
@@ -836,7 +852,6 @@ function renderDetectionList(visibleItems) {
         });
         grid.appendChild(card);
     });
-    els.detectionList.innerHTML = '';
     els.detectionList.appendChild(grid);
 }
 
@@ -962,12 +977,7 @@ function renderResult(file, results) {
                     if (selected) drawItem(selected, true, checkedResultIndices.has(selected.originalIndex));
                 }
 
-                if (lastVisibleItems.length > 0) {
-                    renderDetectionList(lastVisibleItems);
-                } else {
-                    els.resultListPanel.style.display = 'none';
-                    els.detectionList.innerHTML = '';
-                }
+                renderDetectionList(lastVisibleItems);
 
                 lastResultImage = composeCanvas;
                 resolve();

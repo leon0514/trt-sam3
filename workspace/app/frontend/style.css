@@ -458,6 +458,17 @@ button.secondary:hover {
     background: rgba(250, 204, 21, 0.12);
 }
 
+.empty-state {
+    padding: 24px 16px;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 13px;
+    line-height: 1.6;
+    background: var(--bg-input);
+    border: 1px dashed var(--border-hover);
+    border-radius: 8px;
+}
+
 .detection-card.selected.checked {
     border-color: #facc15;
     background: rgba(59, 130, 246, 0.15);

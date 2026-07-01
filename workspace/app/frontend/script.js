@@ -59,7 +59,6 @@ const els = {
     predefinedTagList: document.getElementById('predefinedTagList'),
     predefinedTagAdd: document.getElementById('predefinedTagAdd'),
 
-    mergeResultsGroup: document.getElementById('mergeResultsGroup'),
     mergeResults: document.getElementById('mergeResults'),
 
     cropConfigGroup: document.getElementById('cropConfigGroup'),
@@ -358,7 +357,6 @@ function updateModeUI() {
     // obj-refine 配置
     const isObjRefine = state.mode === 'obj-refine';
     els.predefinedLabelsGroup.style.display = isObjRefine ? 'block' : 'none';
-    els.mergeResultsGroup.style.display = isObjRefine ? 'block' : 'none';
     els.cropConfigGroup.style.display = isObjRefine ? 'block' : 'none';
 
     // 标签输入框的文案
@@ -626,6 +624,7 @@ els.submitBtn.addEventListener('click', async () => {
     formData.append('image', state.target.file);
     formData.append('confidence', els.confidence.value);
     formData.append('return_mask', els.returnMask.checked);
+    formData.append('merge_results', els.mergeResults.checked);
 
     if (needTags) {
         tags.forEach(name => formData.append('class_names', name));
@@ -642,7 +641,6 @@ els.submitBtn.addEventListener('click', async () => {
 
     if (mode === 'obj-refine') {
         formData.append('pre_detect_labels', predefinedTags.join(','));
-        formData.append('merge_results', els.mergeResults.checked);
         formData.append('crop_config_json', JSON.stringify(getCropConfig()));
     }
 

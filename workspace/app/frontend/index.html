@@ -7,11 +7,11 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>TRT SAM3 检测演示</title>
-    <link rel="stylesheet" href="/static/style.css?v=10">
+    <link rel="stylesheet" href="/static/style.css?v=11">
 </head>
 <body>
     <div class="container">
-        <h1>🖼️ TRT SAM3 目标检测与分割</h1>
+        <h1>TRT SAM3 目标检测与分割</h1>
         <div class="main-grid">
             <div class="panel settings-panel" id="settingsPanel">
                 <h3>参数设置</h3>
@@ -76,11 +76,12 @@
                             <input type="text" id="predefinedTagAdd" placeholder="输入标签后回车">
                         </div>
                     </div>
-                    <div class="form-group" id="mergeResultsGroup" style="display:none">
+                    <div class="form-group">
                         <div class="checkbox-row">
                             <input type="checkbox" id="mergeResults" checked>
-                            <label for="mergeResults">合并原图与裁剪结果</label>
+                            <label for="mergeResults">合并预检测与原图结果</label>
                         </div>
+                        <div class="mode-hint" id="mergeResultsHint">仅在 obj-refine / 预检测模式下生效</div>
                     </div>
                     <div class="form-group" id="cropConfigGroup" style="display:none">
                         <div class="collapse-header" id="cropConfigToggle">
@@ -216,6 +217,6 @@
         </div>
     </div>
 
-    <script src="/static/script.js?v=10"></script>
+    <script src="/static/script.js?v=11"></script>
 </body>
 </html>
